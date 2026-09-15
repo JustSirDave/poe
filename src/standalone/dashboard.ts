@@ -66,6 +66,10 @@ function activeFindings(): Finding[] { const states = reviewStates(); return sna
 function kindIcon(finding: Finding): HTMLElement { const holder = element('span', '', `kind-icon ${finding.kind}`); holder.append(icon(finding.kind)); return holder; }
 function meta(finding: Finding): HTMLElement {
   const node = element('div', '', 'idea-meta');
+  if (finding.lastSeen) {
+    const hours = Math.max(0, (Date.now() - finding.lastSeen) / 3600000);
+    node.append(element('span', hours < 1 ? 'Seen within the past hour' : hours < 24 ? `Last seen ${Math.floor(hours)} hours ago` : `Last seen ${Math.floor(hours / 24)} days ago`));
+  }
   node.append(element('span', `${finding.occurrences} occurrences`), element('span', `${finding.sessionCount} sessions`));
   const names = [...new Set(finding.evidence.map(e => projectName(e.workspace)))];
   if (names.length) node.append(element('span', names.length === 1 ? names[0] : `${names.length} example projects`));
@@ -96,12 +100,14 @@ function openIdea(finding: Finding): void {
   text('idea-kind', copy.label); const title = element('h2', finding.responseIntent === 'unclassified' ? 'Long messages with unclear intent' : copy.title); title.id = 'idea-title';
   body.append(title, meta(finding), step('What the coach noticed', finding.explanation, '1'), step('Why it may help', copy.benefit, '2'), step('What to try', copy.next, '3', true));
   const examples = element('section', '', 'review-section'); examples.append(element('h3', 'Session examples'));
-  examples.append(element('p', `Showing ${finding.evidence.length} recent examples from different sessions within the last ${snapshot?.config.lookbackDays || 30} days. Older matches remain until they leave that window. Project folder names are not activity dates.`));
+  examples.append(element('p', `Showing ${finding.evidence.length} latest matching examples within the active ${snapshot?.report?.activeWindowDays || 5}-day window. Older sessions can explain task context but do not count toward recommendations.`));
   if (!finding.evidence.some(item => item.excerpt)) examples.append(element('p', 'Prompt previews are off. In coach.local.json, set "includeExcerpts": true, then restart the coach with --config coach.local.json. Previews are short and secret masking is best effort.'));
   for (const item of finding.evidence) {
     const row = element('div', '', 'evidence-row');
     const date = item.timestamp ? new Date(item.timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Date unavailable';
-    row.append(element('strong', `${item.harness === 'Claude' ? 'Claude Code' : item.harness} · ${projectName(item.workspace)}`), element('p', date));
+    const ageHours = item.timestamp ? Math.max(0, (Date.now() - item.timestamp) / 3600000) : null;
+    const age = ageHours === null ? '' : ageHours < 1 ? ' · Within the past hour' : ageHours < 24 ? ` · ${Math.floor(ageHours)} hours ago` : ` · ${Math.floor(ageHours / 24)} days ago`;
+    row.append(element('strong', `${item.harness === 'Claude' ? 'Claude Code' : item.harness} · ${projectName(item.workspace)}`), element('p', date + age));
     if (item.excerpt) row.append(element('blockquote', item.excerpt));
     const refs = element('details', '', 'technical'); refs.append(element('summary', 'Session reference'), element('code', `Project: ${item.workspace}\nSession: ${item.sessionId}\nRequest: ${item.requestId}\nTask context: ${item.contextRequestId || item.requestId}`)); row.append(refs); examples.append(row);
   }
@@ -155,7 +161,7 @@ function renderMetrics(): void {
   text('output-coverage', `${tokens.turnsWithOutput} of ${report.requestCount} turns include output data`);
   const reviewed = report.responseReview;
   text('response-context-summary', reviewed ? `Long messages: ${reviewed.requestedDetail} matched requests for detail · ${reviewed.unclassified} unclassified · ${reviewed.brevityConflict} with brevity signals. These are local text rules, not quality scores.` : '');
-  text('period', `Last ${config.lookbackDays} days`);
+  text('period', `Active: last ${report.activeWindowDays || 5} days`);
   const count = activeFindings().length;
   text('hero-title', count ? `${count} ${count === 1 ? 'idea' : 'ideas'} for a better next session.` : 'Good habits start with observation.');
   text('hero-description', count ? 'A few patterns in your sessions are worth a closer look. Pick one idea, review the examples, and try a small change.' : 'Keep working as usual. The coach will surface ideas when enough evidence appears in your sessions.');

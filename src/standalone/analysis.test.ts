@@ -57,3 +57,17 @@ it('samples recent distinct sessions instead of the first three matching turns',
   expect(finding.firstSeen).toBe(now - 5000);
   expect(finding.lastSeen).toBe(now - 100);
 });
+
+it('requires enough current evidence even when a wider history window is configured', () => {
+  const sessions = ['old-a', 'old-b', 'current'].map(id => session(id));
+  sessions[0].requests[0].timestamp = now - 22 * 86400000;
+  sessions[1].requests[0].timestamp = now - 6 * 86400000;
+  const report = analyzeEfficiency(sessions, { ...config, lookbackDays: 30 }, now);
+  expect(report.activeWindowDays).toBe(5);
+  expect(report.requestCount).toBe(1);
+  expect(report.findings).toEqual([]);
+  sessions[0].requests[0].timestamp = now - 5 * 86400000;
+  sessions[1].requests[0].timestamp = now - 3600000;
+  expect(analyzeEfficiency(sessions, config, now).findings[0].occurrences).toBe(3);
+  expect(analyzeEfficiency(sessions, config, now + 1).findings).toEqual([]);
+});

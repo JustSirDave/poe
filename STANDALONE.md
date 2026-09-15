@@ -115,3 +115,7 @@ The smoke test uses temporary synthetic logs and tests CLI reports, HTTP restric
 ## Next milestones
 
 Richer observed tool events (arguments, results, failures), paraphrase clustering, proposed skill/script contents, and outcome-based evaluations can build on this foundation. Automatic application needs evaluation and rollback first; it is intentionally not part of this first version.
+
+### Current activity first
+
+Recommendations and overview totals use at most the last five days, even when `lookbackDays` is larger. Older turns can establish the original task behind a current continuation, but cannot increase occurrence counts or trigger findings. The default refresh interval is 30 seconds; processing starts after the assistant writes events to its local log, so this is near-real-time observation, not access to live internal thinking. Examples show their age and mark activity within the past hour.

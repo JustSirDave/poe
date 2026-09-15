@@ -26,6 +26,7 @@ export interface CoachReport {
   responseReview?: { requestedDetail: number; unclassified: number; brevityConflict: number };
   sessionCount: number;
   latestSessionActivity?: number;
+  activeWindowDays?: number;
   requestCount: number;
   harnesses: Record<string, number>;
   recordedTokens: { input: number; output: number; turnsWithInput: number; turnsWithOutput: number };
@@ -68,7 +69,9 @@ function createFinding(kind: Finding['kind'], key: string, turns: Turn[], config
 }
 
 export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now = Date.now()): CoachReport {
-  const cutoff = now - config.lookbackDays * 86400000;
+  // Older turns may establish task context, but never count toward current findings.
+  const activeWindowDays = Math.min(config.lookbackDays, 5);
+  const cutoff = now - activeWindowDays * 86400000;
   const contexts = new Map(sessions.map(session => [session, responseContexts(session.requests)]));
   const turns: Turn[] = sessions.filter(session => session.sessionOrigin !== 'guardian').flatMap(session => session.requests
     .filter(request => request.timestamp !== null && request.timestamp >= cutoff && request.timestamp <= now)
@@ -125,6 +128,7 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
   }
   findings.sort((a, b) => b.occurrences - a.occurrences || a.id.localeCompare(b.id));
   return {
+    activeWindowDays,
     latestSessionActivity: sessions.filter(s => s.sessionOrigin !== 'guardian').reduce((latest, s) => Math.max(latest, s.lastMessageDate || 0), 0) || undefined,
     generatedAt: new Date(now).toISOString(), sessionCount: new Set(turns.map(t => `${t.session.harness}:${t.session.sessionId}`)).size,
     responseReview,

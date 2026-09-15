@@ -6,8 +6,8 @@ const source = z.object({ enabled: z.boolean().default(true), roots: z.array(z.s
 export const coachConfigSchema = z.object({
   sources: z.object({ claude: source.default({ enabled: true, roots: [] }), codex: source.default({ enabled: true, roots: [] }) }).strict().default({ claude: { enabled: true, roots: [] }, codex: { enabled: true, roots: [] } }),
   workspaceRoots: z.array(z.string().min(1)).default([]),
-  lookbackDays: z.number().int().min(1).max(365).default(30),
-  refreshSeconds: z.number().int().min(15).max(3600).default(120),
+  lookbackDays: z.number().int().min(1).max(365).default(5),
+  refreshSeconds: z.number().int().min(15).max(3600).default(30),
   maxFiles: z.number().int().min(1).max(20000).default(2000),
   maxFileMB: z.number().min(1).max(50).default(20),
   includeExcerpts: z.boolean().default(false),
