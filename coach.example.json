@@ -1,0 +1,15 @@
+{
+  "sources": {
+    "claude": { "enabled": true, "roots": [] },
+    "codex": { "enabled": true, "roots": [] }
+  },
+  "workspaceRoots": [],
+  "lookbackDays": 30,
+  "refreshSeconds": 120,
+  "maxFiles": 2000,
+  "maxFileMB": 20,
+  "includeExcerpts": false,
+  "minOccurrences": 3,
+  "largeResponseChars": 12000,
+  "port": 4317
+}

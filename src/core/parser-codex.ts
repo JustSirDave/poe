@@ -43,6 +43,7 @@ interface CodexSessionMeta {
   sessionId: string;
   cwd: string;
   source: string;
+  sessionOrigin?: string;
   model: string;
 }
 
@@ -57,6 +58,7 @@ interface CodexParseState {
   lastTs: number | null;
   currentUserMessage: string;
   currentAssistantTexts: string[];
+  longestAssistantMessage: number;
   currentToolsUsed: string[];
   currentEditedFiles: string[];
   currentReferencedFiles: string[];
@@ -142,6 +144,7 @@ function createCodexState(initialModel: string, editLocIndex?: EditLocIndex): Co
     lastTs: null,
     currentUserMessage: '',
     currentAssistantTexts: [],
+    longestAssistantMessage: 0,
     currentToolsUsed: [],
     currentEditedFiles: [],
     currentReferencedFiles: [],
@@ -228,6 +231,7 @@ function flushCodexTurn(state: CodexParseState, defaultModel: string): void {
     timestamp: state.turnStartTs,
     messageText: state.currentUserMessage,
     responseText,
+    longestAssistantMessage: state.longestAssistantMessage,
     isCanceled: state.turnCanceled,
     agentName: 'Codex',
     agentMode: 'agent',
@@ -245,6 +249,7 @@ function flushCodexTurn(state: CodexParseState, defaultModel: string): void {
 
   state.currentUserMessage = '';
   state.currentAssistantTexts = [];
+  state.longestAssistantMessage = 0;
   state.currentToolsUsed = [];
   state.currentEditedFiles = [];
   state.currentReferencedFiles = [];
@@ -442,19 +447,21 @@ function handleTurnContext(payload: Record<string, unknown>, state: CodexParseSt
 }
 
 function handleUserResponseItem(payload: Record<string, unknown>, state: CodexParseState, ts: number | null, defaultModel: string): void {
-  for (const item of extractContentItems(payload.content)) {
-    if (item.type !== 'input_text' || !item.text || item.text.startsWith('<') || isHarnessInjectedContext(item.text)) continue;
-    if (!state.currentUserMessage) {
-      flushCodexTurn(state, defaultModel);
-      state.currentUserMessage = item.text;
-      state.turnStartTs = ts;
-    }
-  }
+  const message = extractContentItems(payload.content)
+    .filter(item => item.type === 'input_text' && item.text && !item.text.startsWith('<') && !isHarnessInjectedContext(item.text))
+    .map(item => item.text).join('\n');
+  if (message) handleUserMessageEvent({ message }, state, ts, defaultModel);
 }
 
 function handleAssistantResponseItem(payload: Record<string, unknown>, state: CodexParseState): void {
+  if (payload.channel !== 'analysis') {
+    const length = extractContentItems(payload.content).filter(item => item.type === 'output_text').reduce((sum, item) => sum + (item.text?.length || 0), 0);
+    state.longestAssistantMessage = Math.max(state.longestAssistantMessage, length);
+  }
   for (const item of extractContentItems(payload.content)) {
-    if (item.type === 'output_text' && item.text) state.currentAssistantTexts.push(item.text);
+    if (item.type === 'output_text' && item.text) {
+      state.currentAssistantTexts.push(item.text);
+    }
   }
 }
 
@@ -504,6 +511,8 @@ function updateSessionMeta(line: CodexLine, meta: CodexSessionMeta): void {
     meta.sessionId = stringValue(payload.id) || meta.sessionId;
     meta.cwd = stringValue(payload.cwd) || meta.cwd;
     meta.source = stringValue(payload.source) || meta.source;
+    const subagent = recordValue(recordValue(payload.source)?.subagent);
+    meta.sessionOrigin = stringValue(subagent?.other) || (subagent ? 'subagent' : undefined);
   }
   if (line.type === 'turn_context' && !meta.model) {
     meta.model = stringValue(line.payload?.model);
@@ -602,8 +611,8 @@ function findAllJsonlFiles(dir: string): string[] {
   return result;
 }
 
-function parseCodexSessionFile(filePath: string, editLocIndex?: EditLocIndex): Session | null {
-  assertTrustedPath(filePath);
+export function parseCodexSessionFile(filePath: string, editLocIndex?: EditLocIndex, trustedRoots?: string[]): Session | null {
+  assertTrustedPath(filePath, trustedRoots);
   const meta: CodexSessionMeta = {
     sessionId: path.basename(filePath, '.jsonl'),
     cwd: '',
@@ -639,6 +648,7 @@ function parseCodexSessionFile(filePath: string, editLocIndex?: EditLocIndex): S
     sessionId: meta.sessionId,
     workspaceId: wsId,
     workspaceName: wsName,
+    sessionOrigin: meta.sessionOrigin,
     location: meta.source || 'terminal',
     harness: 'Codex',
     creationDate: state.firstTs,

@@ -21,7 +21,7 @@ import { SessionSchema } from './schemas';
  * Validates that a file path is within trusted directories and does not
  * contain path traversal sequences. Throws if the path is unsafe.
  */
-export function assertTrustedPath(filePath: string): void {
+export function assertTrustedPath(filePath: string, explicitRoots?: string[]): void {
   const normalized = path.resolve(filePath);
 
   // Reject path traversal
@@ -30,7 +30,7 @@ export function assertTrustedPath(filePath: string): void {
     throw new Error(`Path traversal detected: ${filePath}`);
   }
 
-  const trustedRoots = getTrustedRoots();
+  const trustedRoots = explicitRoots?.map(root => path.resolve(root)) ?? getTrustedRoots();
   const isTrusted = trustedRoots.some(root => normalized.startsWith(root + path.sep) || normalized === root);
   if (!isTrusted) {
     throw new Error(`Path is outside trusted directories: ${filePath}`);

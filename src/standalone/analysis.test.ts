@@ -1,0 +1,47 @@
+import { describe, expect, it } from 'vitest';
+import { createRequest, createSession } from '../core/parser-shared';
+import { analyzeEfficiency } from './analysis';
+import { resolveConfig } from './config';
+const now = Date.now();
+const repeated = 'Inspect the failing tests, explain the root cause, implement a focused fix and rerun the affected tests.';
+function session(id: string, message = repeated, workspace = '/project') {
+  return createSession({ sessionId: id, workspaceId: workspace, workspaceName: workspace, workspaceRootPath: workspace, harness: 'Codex', requests: [createRequest({ requestId: id + '-r', timestamp: now - 1000, messageText: message, responseText: 'Done' })] });
+}
+const config = resolveConfig({}, process.cwd());
+describe('efficiency candidates', () => {
+  it('groups exact instructions across sessions without exposing prompt text by default', () => {
+    const report = analyzeEfficiency([session('a'), session('b'), session('c')], config, now);
+    expect(report.findings).toHaveLength(1);
+    expect(report.findings[0].occurrences).toBe(3);
+    expect(JSON.stringify(report)).not.toContain(repeated);
+    expect(report.recordedTokens.turnsWithInput).toBe(0);
+  });
+  it('does not merge different constraints or unrelated workspaces', () => {
+    expect(analyzeEfficiency([session('a'), session('b', repeated + ' Do not change public APIs.'), session('c', repeated, '/other')], config, now).findings).toHaveLength(0);
+  });
+  it('requires multiple sessions and excludes old or missing timestamps', () => {
+    const a = session('same'); a.requests.push(...session('same').requests, ...session('same').requests);
+    expect(analyzeEfficiency([a], config, now).findings).toHaveLength(0);
+    a.requests[0].timestamp = null; a.requests[1].timestamp = now - 40 * 86400000;
+    expect(analyzeEfficiency([a], config, now).requestCount).toBe(1);
+  });
+  it('redacts optional evidence before returning it', () => {
+    const message = repeated + ' api_key="sk-' + 'a'.repeat(45) + '"';
+    const report = analyzeEfficiency([session('a', message), session('b', message), session('c', message)], { ...config, includeExcerpts: true }, now);
+    expect(report.findings[0].evidence[0].excerpt).toContain('REDACTED');
+    expect(JSON.stringify(report)).not.toContain('a'.repeat(45));
+  });
+  it('records known zero token usage and flags response size without claiming savings', () => {
+    const sessions = ['a', 'b', 'c'].map(id => session(id, 'hello'));
+    for (const s of sessions) { s.requests[0].promptTokens = 0; s.requests[0].completionTokens = 100; s.requests[0].responseLength = 15000; s.requests[0].longestAssistantMessage = 15000; }
+    const report = analyzeEfficiency(sessions, config, now);
+    expect(report.recordedTokens).toEqual({ input: 0, output: 300, turnsWithInput: 3, turnsWithOutput: 3 });
+    expect(report.findings[0].kind).toBe('output');
+    expect(report.findings[0].caution).toContain('not measured token waste');
+  });
+  it('rejects unknown config fields and dangerous resource settings', () => {
+    expect(() => resolveConfig({ refreshSeconds: 0 }, process.cwd())).toThrow();
+    expect(() => resolveConfig({ maxFiles: 1000000 }, process.cwd())).toThrow();
+    expect(() => resolveConfig({ includeExcerpt: true }, process.cwd())).toThrow();
+  });
+});

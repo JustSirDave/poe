@@ -1,7 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
   "entry": [
-    "src/extension.ts",
+    "src/standalone/main.ts", "src/standalone/dashboard.ts", "src/extension.ts",
     "src/canvas/host.ts",
     "src/webview/app.ts",
     "src/core/warm-up-worker.ts",
@@ -16,6 +16,7 @@
     "src/webview/page-workflows.ts",
     "src/webview/vibe-roles.ts"
   ],
+  "ignoreUnresolved": ["./parse-worker.js"],
   "ignoreDependencies": ["lint-staged", "serve"],
   "ignoreBinaries": ["tsx", "sqlite3"],
   "rules": {

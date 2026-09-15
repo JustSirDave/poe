@@ -22,3 +22,8 @@ marketing/
 
 # Playwright test results
 test-results/
+
+# Private standalone coach configuration and reports
+coach.local.json
+.coach-private/
+*.session.jsonl

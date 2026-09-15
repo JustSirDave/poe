@@ -90,6 +90,7 @@ interface ClaudeAssistantData {
   nextIndex: number;
   lastTs: number | null;
   assistantTexts: string[];
+  longestAssistantMessage: number;
   toolsUsed: string[];
   editedFiles: string[];
   referencedFiles: string[];
@@ -313,6 +314,7 @@ function collectClaudeAssistantData(lines: ClaudeLine[], startIndex: number, las
     nextIndex: startIndex,
     lastTs,
     assistantTexts: [],
+    longestAssistantMessage: 0,
     toolsUsed: [],
     editedFiles: [],
     referencedFiles: [],
@@ -345,9 +347,12 @@ function collectClaudeAssistantData(lines: ClaudeLine[], startIndex: number, las
       data.totalCacheReadTokens += cacheRead;
       data.totalCacheWriteTokens += cacheWrite;
 
+      const visibleLength = toContentArray(next.message?.content).filter(block => block.type === 'text').reduce((sum, block) => sum + (block.text?.length || 0), 0);
+      data.longestAssistantMessage = Math.max(data.longestAssistantMessage, visibleLength);
       for (const block of toContentArray(next.message?.content)) {
         if (block.type === 'text' && block.text) {
           data.assistantTexts.push(block.text);
+          data.longestAssistantMessage = Math.max(data.longestAssistantMessage, block.text.length);
           continue;
         }
         const incomplete = !!block.id && !toolResults.completed.has(block.id);
@@ -676,6 +681,7 @@ function buildClaudeRequest(
     timestamp: userTs,
     messageText: getClaudeUserText(line),
     responseText: assistantData.assistantTexts.join('\n'),
+    longestAssistantMessage: assistantData.longestAssistantMessage,
     agentName: 'Claude',
     agentMode: 'agent',
     modelId: assistantData.model,
@@ -695,13 +701,14 @@ function buildClaudeRequest(
   return request;
 }
 
-function parseClaudeSessionFile(
+export function parseClaudeSessionFile(
   filePath: string,
   wsId: string,
   wsName: string,
   editLocIndex?: EditLocIndex,
+  trustedRoots?: string[],
 ): Session | null {
-  assertTrustedPath(filePath);
+  assertTrustedPath(filePath, trustedRoots);
   let raw: string;
   try {
     const content = readFileSafe(filePath);

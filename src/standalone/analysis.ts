@@ -1,0 +1,106 @@
+import { createHash } from 'node:crypto';
+import type { Session, SessionRequest } from '../core/types';
+import { redactSecrets } from '../core/redact-secrets';
+import type { CoachConfig } from './config';
+
+export interface Evidence { sessionId: string; requestId: string; harness: string; workspace: string; timestamp: number | null; excerpt?: string }
+export interface Finding {
+  id: string;
+  kind: 'skill' | 'memory' | 'workflow' | 'output';
+  title: string;
+  explanation: string;
+  occurrences: number;
+  sessionCount: number;
+  evidence: Evidence[];
+  suggestion: string;
+  caution: string;
+  draft: string;
+}
+export interface CoachReport {
+  generatedAt: string;
+  excludedInternalSessions?: number;
+  sessionCount: number;
+  requestCount: number;
+  harnesses: Record<string, number>;
+  recordedTokens: { input: number; output: number; turnsWithInput: number; turnsWithOutput: number };
+  findings: Finding[];
+  sources: { harness: string; root: string; exists: boolean }[];
+  scan: { files: number; parsed: number; reused: number; skipped: number; warnings: string[] };
+}
+interface Turn { session: Session; request: SessionRequest }
+const digest = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 20);
+
+function evidence(turn: Turn, excerpts: boolean): Evidence {
+  return {
+    sessionId: turn.session.sessionId, requestId: turn.request.requestId,
+    harness: turn.session.harness, workspace: turn.session.workspaceRootPath || turn.session.workspaceName,
+    timestamp: turn.request.timestamp,
+    ...(excerpts ? { excerpt: redactSecrets(turn.request.messageText).slice(0, 240) } : {}),
+  };
+}
+
+function createFinding(kind: Finding['kind'], key: string, turns: Turn[], config: CoachConfig): Finding {
+  const descriptions = {
+    skill: ['Repeated instruction', 'The same substantial instruction appears in multiple sessions.', 'Turn the repeated procedure into a focused skill, or a script when its steps are deterministic.', 'Repetition can be intentional. A skill saves tokens only if it reduces loaded context or retries.'],
+    memory: ['Repeated preference', 'The same instruction containing preference language appears in multiple sessions.', 'Confirm the preference is durable, then store a short scoped memory with a clear exception.', 'Do not turn a temporary task instruction into a permanent preference.'],
+    workflow: ['Recurring tool sequence', 'Multiple sessions contain the same recorded tool sequence for the same work category.', 'Review these examples for a reusable procedure or script. Preserve task-specific checks.', 'Tool names alone do not prove identical work; arguments and successful outcomes must be checked.'],
+    output: ['Large recorded responses', 'Several turns contain an individual assistant message above the configured character threshold. File-write payloads and recorded reasoning are excluded.', 'Use concise progress updates and targeted results where the task does not require a full artifact.', 'Long code, documents, and reasoning records can be necessary. Response size is not measured token waste.'],
+  } as const;
+  const [title, explanation, suggestion, caution] = descriptions[kind];
+  const id = digest(`${kind}:${key}`);
+  return {
+    id, kind, title, explanation, suggestion, caution, occurrences: turns.length,
+    sessionCount: new Set(turns.map(t => `${t.session.harness}:${t.session.sessionId}`)).size,
+    evidence: turns.slice(0, 3).map(t => evidence(t, config.includeExcerpts)),
+    draft: `# ${title}\n\nStatus: candidate, not installed or evaluated.\n\n${suggestion}\n\n## Evidence\n${turns.slice(0, 3).map(t => `- ${t.session.harness}: session ${t.session.sessionId}, request ${t.request.requestId}`).join('\n')}\n\n## Preserve quality\n- Inspect the recorded examples before deciding what can be reused.\n- Preserve the original task requirements and necessary checks.\n- Test the candidate on representative tasks; record correctness, corrections, and available token usage.\n- Keep the previous version and revert if results regress.\n\n## Limits\n${caution}\n`,
+  };
+}
+
+export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now = Date.now()): CoachReport {
+  const cutoff = now - config.lookbackDays * 86400000;
+  const turns: Turn[] = sessions.filter(session => session.sessionOrigin !== 'guardian').flatMap(session => session.requests
+    .filter(request => request.timestamp !== null && request.timestamp >= cutoff && request.timestamp <= now)
+    .map(request => ({ session, request })));
+  const promptGroups = new Map<string, Turn[]>();
+  const workflowGroups = new Map<string, Turn[]>();
+  const large: Turn[] = [];
+  const tokens = { input: 0, output: 0, turnsWithInput: 0, turnsWithOutput: 0 };
+  const harnesses: Record<string, number> = {};
+  for (const turn of turns) {
+    const r = turn.request;
+    harnesses[turn.session.harness] = (harnesses[turn.session.harness] || 0) + 1;
+    if (r.promptTokens !== null && Number.isFinite(r.promptTokens) && r.promptTokens >= 0) { tokens.input += r.promptTokens; tokens.turnsWithInput++; }
+    if (r.completionTokens !== null && Number.isFinite(r.completionTokens) && r.completionTokens >= 0) { tokens.output += r.completionTokens; tokens.turnsWithOutput++; }
+    const message = r.messageText.trim().replaceAll(/\s+/g, ' ');
+    // Exact normalized repetitions avoid merging prompts whose constraints differ.
+    // Exclude truncated messages and obvious injected context.
+    const resumeNotice = /^I hit my usage limit while you were working, but it has reset now\. Please continue from where you left off\.$/i.test(message);
+    if (!resumeNotice && message.length >= 60 && r.messageLength <= 16000 && !message.startsWith('<') && !message.startsWith('The following is the Codex agent history whose request action you are assessing.')) {
+      const key = `${turn.session.workspaceRootPath || turn.session.workspaceId}:${message}`;
+      const group = promptGroups.get(key) || []; group.push(turn); promptGroups.set(key, group);
+    }
+    const sequence = r.toolsUsed.join(' → ');
+    if (r.toolsUsed.length >= 3 && r.toolsUsed.length <= 12 && new Set(r.toolsUsed).size >= 2) {
+      const key = `${turn.session.workspaceRootPath || turn.session.workspaceId}:${r.workType}:${sequence}`;
+      const group = workflowGroups.get(key) || []; group.push(turn); workflowGroups.set(key, group);
+    }
+    if ((r.longestAssistantMessage ?? 0) >= config.largeResponseChars) large.push(turn);
+  }
+  const findings: Finding[] = [];
+  for (const [key, group] of promptGroups) {
+    if (group.length < config.minOccurrences || new Set(group.map(t => t.session.sessionId)).size < 2) continue;
+    const kind = /\b(always|never|remember|prefer|from now on)\b/i.test(group[0].request.messageText) ? 'memory' : 'skill';
+    findings.push(createFinding(kind, key, group, config));
+  }
+  for (const [key, group] of workflowGroups) {
+    if (group.length >= config.minOccurrences && new Set(group.map(t => t.session.sessionId)).size >= 2) findings.push(createFinding('workflow', key, group, config));
+  }
+  if (large.length >= config.minOccurrences) findings.push(createFinding('output', 'large-assistant-messages-v2', large, config));
+  findings.sort((a, b) => b.occurrences - a.occurrences || a.id.localeCompare(b.id));
+  return {
+    generatedAt: new Date(now).toISOString(), sessionCount: new Set(turns.map(t => `${t.session.harness}:${t.session.sessionId}`)).size,
+    excludedInternalSessions: sessions.filter(session => session.sessionOrigin === 'guardian').length,
+    requestCount: turns.length, harnesses, recordedTokens: tokens, findings: findings.slice(0, 40),
+    sources: [], scan: { files: 0, parsed: 0, reused: 0, skipped: 0, warnings: [] },
+  };
+}

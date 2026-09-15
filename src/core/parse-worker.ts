@@ -9,6 +9,7 @@
  */
 
 import { parentPort } from 'worker_threads';
+import { scanEfficiency } from './efficiency-scan';
 import { stripSessionsForMemory } from './cache';
 import { emitResultChunks, DEFAULT_SESSION_CHUNK_SIZE } from './parse-chunking';
 import { createAckWindow, shouldSendProgressImmediately } from './parse-worker-stream';
@@ -18,6 +19,7 @@ import { installRuntimeDebugHooks, runtimeDebug } from './runtime-debug';
 import { createTelemetrySampler } from './worker-telemetry';
 
 interface ParseWorkerRequest {
+  efficiency?: unknown;
   logsDirs?: string[];
 }
 
@@ -50,8 +52,9 @@ function send(msg: unknown): void {
 
 function parseWorkerRequest(msg: unknown): ParseWorkerRequest {
   if (typeof msg !== 'object' || msg === null) return {};
-  const candidate = msg as { logsDirs?: unknown };
+  const candidate = msg as { logsDirs?: unknown; efficiency?: unknown };
   return {
+    efficiency: candidate.efficiency,
     logsDirs: Array.isArray(candidate.logsDirs)
       ? candidate.logsDirs.filter((dir): dir is string => typeof dir === 'string')
       : undefined,
@@ -92,6 +95,11 @@ function onMessage(handler: (msg: ParseWorkerRequest) => void | Promise<void>): 
 const sampleTelemetry = createTelemetrySampler({ warningCounts: () => getParseWarningCounts() });
 
 onMessage(async (msg) => {
+  if (msg.efficiency !== undefined) {
+    try { send({ type: 'efficiencyResult', report: scanEfficiency(msg.efficiency) }); }
+    catch (error) { send({ type: 'error', message: error instanceof Error ? error.message : 'Scan failed' }); }
+    return;
+  }
   let lastProgress: LoadProgress | null = null;
   // Periodically refresh telemetry even if the parse loop goes quiet during a single large
   // workspace, so the loading screen's resource gauges keep ticking (issue #106).

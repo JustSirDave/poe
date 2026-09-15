@@ -64,6 +64,8 @@ export interface SessionRequest {
   totalElapsed: number | null;
   messageLength: number;
   responseLength: number;
+  /** Longest individual conversational message; excludes reasoning and file-write payloads. */
+  longestAssistantMessage?: number;
   userCode: CodeBlock[];
   aiCode: CodeBlock[];
   toolConfirmations: ToolConfirmation[];
@@ -121,6 +123,8 @@ export interface CodeBlock {
 export type SessionEndReason = 'shutdown' | 'active' | 'aborted' | 'unknown';
 
 export interface Session {
+  /** Recorded internal session origin, when available. */
+  sessionOrigin?: string;
   sessionId: string;
   workspaceId: string;
   workspaceName: string;

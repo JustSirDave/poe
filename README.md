@@ -1,3 +1,59 @@
+# Poe
+
+**I am Poe.** A local workflow coach for Claude Code and Codex.
+
+Poe observes recorded coding sessions and surfaces reviewable ideas for reusable skills, memory, workflows, and response length. It runs in a browser on your computer, without VS Code. Analysis makes no model calls and does not scan project documents.
+
+This early working version builds on [Microsoft AI Engineering Coach](https://github.com/microsoft/AI-Engineering-Coach). The dashboard currently uses the Session Coach name. Poe is not yet an autonomous agent or a locally running language model.
+
+## Start locally
+
+Use Node.js 24 LTS:
+
+```sh
+npm ci
+npm run build:coach
+npm run coach
+```
+
+Open the loopback URL printed in your terminal. See [the standalone guide](STANDALONE.md) for source configuration, prompt previews, MCP integration, and limitations.
+
+## Current capabilities
+
+- Local Claude Code and Codex session parsing with automatic refresh.
+- Evidence-backed candidates and persistent dismiss/reopen decisions.
+- Read-only MCP tools for reviewing findings with your assistant.
+- Internal approval-review and standard resume-message filtering.
+- Conversational response measurements separated from file-write payloads and recorded reasoning.
+
+Candidates need evaluation: repeated work can be intentional, and long responses can be necessary. Poe does not measure intelligence, prove token savings, or automatically install changes.
+
+## Small next improvements
+
+1. A prompt-preview switch in the dashboard.
+2. Feedback reasons: useful, expected behavior, or incorrect.
+3. Open an exact session turn from an idea.
+4. A project filter for focused reviews.
+5. A small draft inbox with an editable skill proposal and explicit apply action.
+
+## Development
+
+```sh
+npm run check
+npm run build:coach
+node scripts/coach-smoke.mjs --browser
+```
+
+The full inherited test suite requires SQLite on PATH. See the standalone guide for details.
+
+## Privacy and attribution
+
+Keep session logs, local configuration, reports, and personal memory out of public commits. Local parsing makes no network requests; anything passed to an assistant through MCP is available to that assistant.
+
+MIT licensed. Microsoft's license and copyright notices are retained. The original extension remains in this repository; its documentation follows.
+
+---
+
 <h1 align="center">AI Engineer Coach</h1>
 
 <p align="center">
