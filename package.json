@@ -292,7 +292,8 @@
   },
   "scripts": {
     "build:coach": "node build-coach.mjs",
-    "coach": "node dist/coach.cjs",
+    "poe": "node dist/poe.cjs",
+    "coach": "node dist/poe.cjs",
     "vscode:prepublish": "npm run build",
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",

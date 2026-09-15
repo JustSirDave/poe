@@ -4,8 +4,8 @@
     "codex": { "enabled": true, "roots": [] }
   },
   "workspaceRoots": [],
-  "lookbackDays": 30,
-  "refreshSeconds": 120,
+  "lookbackDays": 5,
+  "refreshSeconds": 30,
   "maxFiles": 2000,
   "maxFileMB": 20,
   "includeExcerpts": false,

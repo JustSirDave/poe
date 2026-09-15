@@ -72,7 +72,7 @@ export function scanEfficiency(input: unknown): CoachReport {
         // A cursor retains parser state; only new records enter the parser on normal appends.
         const reader = item?.reader || new IncrementalLog(() => observeTools(entry.harness === 'codex'
           ? createCodexAccumulator(entry.file)
-          : createClaudeAccumulator(entry.file, path.dirname(entry.file), path.basename(path.dirname(entry.file))), entry.harness));
+          : createClaudeAccumulator(entry.file, path.dirname(entry.file), path.basename(path.dirname(entry.file))), entry.harness, config.includeExcerpts));
         assertTrustedPath(entry.file, [entry.root]);
         const result = reader.read(entry.file);
         bytesRead += result.bytesRead;

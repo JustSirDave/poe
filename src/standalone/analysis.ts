@@ -2,10 +2,11 @@ import { createHash } from 'node:crypto';
 import type { Session, SessionRequest } from '../core/types';
 import { responseContexts, type RequestContext } from './request-context';
 import { sessionFindings } from './session-findings';
+import { memoryFindings } from './memory-findings';
 import { redactSecrets } from '../core/redact-secrets';
 import type { CoachConfig } from './config';
 
-export interface Evidence { sessionId: string; requestId: string; harness: string; workspace: string; timestamp: number | null; contextRequestId?: string; toolCallIds?: string[]; excerpt?: string }
+export interface Evidence { sessionId: string; requestId: string; harness: string; workspace: string; timestamp: number | null; contextRequestId?: string; toolCallIds?: string[]; reasoningIds?: string[]; excerpt?: string }
 export interface Finding {
   id: string;
   firstSeen?: number;
@@ -29,6 +30,7 @@ export interface CoachReport {
   latestSessionActivity?: number;
   activeWindowDays?: number;
   toolSignalCoverage?: { retained: number; dropped: number };
+  reasoningSignalCoverage?: { retained: number; dropped: number; previews: boolean };
   requestCount: number;
   harnesses: Record<string, number>;
   recordedTokens: { input: number; output: number; turnsWithInput: number; turnsWithOutput: number };
@@ -109,11 +111,10 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
       else { responseReview.unclassified++; large.push(turn); }
     }
   }
-  const findings: Finding[] = sessionFindings(sessions, cutoff, now);
+  const findings: Finding[] = [...sessionFindings(sessions, cutoff, now), ...memoryFindings(sessions, cutoff, now, config)];
   for (const [key, group] of promptGroups) {
     if (group.length < config.minOccurrences || new Set(group.map(t => t.session.sessionId)).size < 2) continue;
-    const kind = /\b(always|never|remember|prefer|from now on)\b/i.test(group[0].request.messageText) ? 'memory' : 'skill';
-    findings.push(createFinding(kind, key, group, config));
+    findings.push(createFinding('skill', key, group, config));
   }
   for (const [key, group] of workflowGroups) {
     if (group.length >= config.minOccurrences && new Set(group.map(t => t.session.sessionId)).size >= 2) findings.push(createFinding('workflow', key, group, config));
@@ -131,6 +132,7 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
   findings.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0) || b.occurrences - a.occurrences || a.id.localeCompare(b.id));
   return {
     toolSignalCoverage: { retained: sessions.reduce((n, s) => n + (s.toolActivity?.length || 0), 0), dropped: sessions.reduce((n, s) => n + (s.toolActivityDropped || 0), 0) },
+    reasoningSignalCoverage: { retained: sessions.reduce((n, s) => n + (s.reasoningActivity?.length || 0), 0), dropped: sessions.reduce((n, s) => n + (s.reasoningActivityDropped || 0), 0), previews: config.includeExcerpts },
     activeWindowDays,
     latestSessionActivity: sessions.filter(s => s.sessionOrigin !== 'guardian').reduce((latest, s) => Math.max(latest, s.lastMessageDate || 0), 0) || undefined,
     generatedAt: new Date(now).toISOString(), sessionCount: new Set(turns.map(t => `${t.session.harness}:${t.session.sessionId}`)).size,

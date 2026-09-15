@@ -25,7 +25,7 @@ it('persists feedback and honors dismissal and reopening across MCP requests', a
     const handle = createMcpHandler(service);
     await handle({ jsonrpc: '2.0', id: 1, method: 'initialize' });
     async function findings() {
-      const result = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'coach_findings' } }) as { result: { content: { text: string }[] } };
+      const result = await handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'poe_findings' } }) as { result: { content: { text: string }[] } };
       return JSON.parse(result.result.content[0].text) as unknown[];
     }
     expect(await findings()).toHaveLength(0);

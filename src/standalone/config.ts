@@ -14,7 +14,7 @@ export const coachConfigSchema = z.object({
   minOccurrences: z.number().int().min(3).max(100).default(3),
   largeResponseChars: z.number().int().min(2000).max(100000).default(12000),
   port: z.number().int().min(0).max(65535).default(4317),
-  stateDir: z.string().min(1).default(path.join(os.homedir(), '.ai-engineer-coach', 'standalone')),
+  stateDir: z.string().min(1).default(path.join(os.homedir(), '.poe', 'standalone')),
 }).strict();
 export type CoachConfig = z.infer<typeof coachConfigSchema>;
 

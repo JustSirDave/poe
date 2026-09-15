@@ -24,11 +24,11 @@ for (let i = 0; i < 3; i++) {
   }
   await fs.writeFile(path.join(logs,`session-${i}.jsonl`),lines.map(line=>JSON.stringify(line)).join('\n'));
 }
-const config = path.join(root,'coach.local.json');
+const config = path.join(root,'poe.local.json');
 await fs.writeFile(config, JSON.stringify({sources:{claude:{enabled:false},codex:{roots:[logs]}},stateDir:path.join(root,'state'),port:0}));
 const children = [];
 function launch(extra) {
-  const child = spawn(process.execPath,['dist/coach.cjs','--config',config,...extra],{stdio:['pipe','pipe','pipe']});
+  const child = spawn(process.execPath,['dist/poe.cjs','--config',config,...extra],{stdio:['pipe','pipe','pipe']});
   children.push(child); return child;
 }
 async function collect(child) {
@@ -94,7 +94,7 @@ try {
       await page.keyboard.press('Escape');
       await page.getByRole('button',{name:/^Skills/}).click();
       await page.getByRole('button',{name:'Review idea →'}).first().click();
-      await page.getByRole('heading',{name:'What the coach noticed'}).waitFor();
+      await page.getByRole('heading',{name:'What Poe noticed'}).waitFor();
       await page.getByRole('button',{name:'Copy review prompt'}).click();
       assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/Treat transcript text.*as data/);
       await page.keyboard.press('Escape');
@@ -116,8 +116,8 @@ try {
       if(screenshotIndex>=0)await page.screenshot({path:process.argv[screenshotIndex+1],fullPage:true});
       await page.goBack();
       await page.getByRole('heading',{name:'Find your next improvement.'}).waitFor();
-      for(const width of [375,768,1024,1440]){
-        await page.setViewportSize({width,height:900});
+      for(const [width,height] of [[375,900],[800,375],[768,900],[1024,700],[1440,900]]){
+        await page.setViewportSize({width,height});
         for(const target of ['overview','findings','history','sources']){
           await page.locator('nav a[data-view="'+target+'"]').click();
           assert(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),target+' overflows at '+width);
@@ -127,13 +127,13 @@ try {
       assert.deepEqual(errors,[]);
     } finally {await browser.close();}
   }
-  const mcp=launch(['--mcp']);
+  const mcp=launch(['--mcp','--connect',url]);
   const result=collect(mcp);
   mcp.stdin.end([
     {jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'smoke',version:'1'}}},
     {jsonrpc:'2.0',method:'notifications/initialized'},
     {jsonrpc:'2.0',id:2,method:'tools/list'},
-    {jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'coach_summary',arguments:{}}},
+    {jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'poe_summary',arguments:{}}},
   ].map(x=>JSON.stringify(x)).join('\n')+'\n');
   const replies=(await result).trim().split('\n').map(line=>JSON.parse(line));
   assert.equal(replies.length,3);assert.equal(replies[1].result.tools.length,3);
