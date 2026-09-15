@@ -21,6 +21,7 @@ Open the loopback URL printed in your terminal. See [the standalone guide](STAND
 ## Current capabilities
 
 - Local Claude Code and Codex session parsing with automatic refresh.
+- Historical token trends with separate Claude Code and Codex activity, cache-read context, and coverage labels.
 - Evidence-backed candidates and persistent dismiss/reopen decisions.
 - Read-only MCP tools for reviewing findings with your assistant.
 - Internal approval-review and standard resume-message filtering.

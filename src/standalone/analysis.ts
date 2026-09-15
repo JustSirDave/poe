@@ -22,6 +22,30 @@ export interface Finding {
   caution: string;
   draft: string;
 }
+export interface TokenUsagePoint {
+  date: string;
+  harness: string;
+  sessions: number;
+  turns: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  turnsWithInput: number;
+  turnsWithOutput: number;
+}
+export interface HarnessActivity {
+  sessions: number;
+  turns: number;
+  firstActivity?: number;
+  lastActivity?: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  turnsWithInput: number;
+  turnsWithOutput: number;
+}
 export interface CoachReport {
   generatedAt: string;
   excludedInternalSessions?: number;
@@ -34,12 +58,55 @@ export interface CoachReport {
   requestCount: number;
   harnesses: Record<string, number>;
   recordedTokens: { input: number; output: number; turnsWithInput: number; turnsWithOutput: number };
+  usageHistory: { firstActivity?: number; lastActivity?: number; days: TokenUsagePoint[]; byHarness: Record<string, HarnessActivity> };
   findings: Finding[];
   sources: { harness: string; root: string; exists: boolean }[];
   scan: { incremental?: number; bytesRead?: number; files: number; parsed: number; reused: number; skipped: number; warnings: string[] };
 }
 interface Turn { session: Session; request: SessionRequest; context?: RequestContext }
 const digest = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 20);
+
+function usageHistory(sessions: Session[], now: number): CoachReport['usageHistory'] {
+  type MutablePoint = TokenUsagePoint & { sessionIds: Set<string> };
+  const points = new Map<string, MutablePoint>();
+  const harnessSessions = new Map<string, Set<string>>();
+  const byHarness: Record<string, HarnessActivity> = {};
+  let firstActivity: number | undefined;
+  let lastActivity: number | undefined;
+  for (const session of sessions) {
+    if (session.sessionOrigin === 'guardian') continue;
+    const sessionKey = `${session.harness}:${session.sessionId}`;
+    const seen = harnessSessions.get(session.harness) || new Set<string>();
+    seen.add(sessionKey); harnessSessions.set(session.harness, seen);
+    const summary = byHarness[session.harness] ||= { sessions: 0, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0 };
+    for (const request of session.requests) {
+      const timestamp = request.timestamp;
+      if (timestamp === null || timestamp > now) continue;
+      firstActivity = firstActivity === undefined ? timestamp : Math.min(firstActivity, timestamp);
+      lastActivity = lastActivity === undefined ? timestamp : Math.max(lastActivity, timestamp);
+      summary.firstActivity = summary.firstActivity === undefined ? timestamp : Math.min(summary.firstActivity, timestamp);
+      summary.lastActivity = summary.lastActivity === undefined ? timestamp : Math.max(summary.lastActivity, timestamp);
+      summary.turns++;
+      if (request.promptTokens !== null && Number.isFinite(request.promptTokens) && request.promptTokens >= 0) { summary.input += request.promptTokens; summary.turnsWithInput++; }
+      if (request.completionTokens !== null && Number.isFinite(request.completionTokens) && request.completionTokens >= 0) { summary.output += request.completionTokens; summary.turnsWithOutput++; }
+      if (request.cacheReadTokens !== null && Number.isFinite(request.cacheReadTokens) && request.cacheReadTokens >= 0) summary.cacheRead += request.cacheReadTokens;
+      if (request.cacheWriteTokens !== null && Number.isFinite(request.cacheWriteTokens) && request.cacheWriteTokens >= 0) summary.cacheWrite += request.cacheWriteTokens;
+      const date = new Date(timestamp).toISOString().slice(0, 10);
+      const key = `${date}:${session.harness}`;
+      const point = points.get(key) || { date, harness: session.harness, sessions: 0, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0, sessionIds: new Set<string>() };
+      point.turns++; point.sessionIds.add(sessionKey);
+      if (request.promptTokens !== null && Number.isFinite(request.promptTokens) && request.promptTokens >= 0) { point.input += request.promptTokens; point.turnsWithInput++; }
+      if (request.completionTokens !== null && Number.isFinite(request.completionTokens) && request.completionTokens >= 0) { point.output += request.completionTokens; point.turnsWithOutput++; }
+      if (request.cacheReadTokens !== null && Number.isFinite(request.cacheReadTokens) && request.cacheReadTokens >= 0) point.cacheRead += request.cacheReadTokens;
+      if (request.cacheWriteTokens !== null && Number.isFinite(request.cacheWriteTokens) && request.cacheWriteTokens >= 0) point.cacheWrite += request.cacheWriteTokens;
+      points.set(key, point);
+    }
+  }
+  for (const [harness, summary] of Object.entries(byHarness)) summary.sessions = harnessSessions.get(harness)?.size || 0;
+  const days = [...points.values()].map(({ sessionIds, ...point }) => ({ ...point, sessions: sessionIds.size }))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.harness.localeCompare(b.harness));
+  return { firstActivity, lastActivity, days, byHarness };
+}
 
 function evidence(turn: Turn, excerpts: boolean): Evidence {
   return {
@@ -138,7 +205,7 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
     generatedAt: new Date(now).toISOString(), sessionCount: new Set(turns.map(t => `${t.session.harness}:${t.session.sessionId}`)).size,
     responseReview,
     excludedInternalSessions: sessions.filter(session => session.sessionOrigin === 'guardian').length,
-    requestCount: turns.length, harnesses, recordedTokens: tokens, findings: findings.slice(0, 40),
+    requestCount: turns.length, harnesses, recordedTokens: tokens, usageHistory: usageHistory(sessions, now), findings: findings.slice(0, 40),
     sources: [], scan: { files: 0, parsed: 0, reused: 0, skipped: 0, warnings: [] },
   };
 }

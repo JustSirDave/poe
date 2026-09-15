@@ -18,7 +18,7 @@ The standalone build has no VS Code requirement. The upstream extension remains 
 
 ## Using the dashboard
 
-Overview summarizes observed sessions and recorded tokens. **Opportunities** are suggestions based on repeated patterns, not changes already applied or proven savings. Filter them by Skills, Memory, Workflows, or Response length.
+Overview summarizes recent sessions and shows separate all-history activity cards for Claude Code and Codex. **Token usage** charts the recorded input and output fields over 7, 30, or 90 days, or all loaded history. **Opportunities** remain suggestions based only on current patterns, not changes already applied or proven savings. Filter them by Skills, Memory, Workflows, or Response length.
 
 Choose **Review idea** to see what was noticed, why it might help, what to try, and the session references. **Copy review prompt** prepares a request you can paste into Claude Code or Codex to evaluate the idea. Prompt excerpts remain controlled by your local configuration. **Dismiss idea** moves the decision to Review history, where you can reopen it.
 
@@ -41,7 +41,7 @@ Set `enabled: false` to disable a source. Explicit roots must be directories con
 
 `workspaceRoots` filters sessions by their recorded working directory after parsing logs; it is not a filesystem permission boundary. Unknown working directories are excluded when this filter is set. The coach never opens project documentation to apply this filter.
 
-`lookbackDays` limits analyzed turns; discovery still inspects metadata and reads selected log files. `maxFiles` selects the most recently modified files, and `maxFileMB` skips oversized files. The dashboard reports skips. Unchanged files are reused in worker memory. Normally, growing files consume only appended bytes plus small boundary probes. Codex retains parser state; Claude retains completed turns and re-evaluates its unfinished turn as tool results arrive. Partial JSON and UTF-8 records wait for completion. Truncation, replacement, changed boundary bytes, and every twentieth append trigger a fresh parse. Boundary probes cannot detect every interior rewrite during growth; periodic revalidation limits that uncertainty. Cursors are in memory only, so restarting performs an initial scan. No raw transcript disk cache is created. Default refresh is 120 seconds.
+`lookbackDays` limits current findings and overview totals; the token-history page aggregates all sessions loaded from the selected log files. Discovery still inspects metadata and reads selected log files. `maxFiles` selects the most recently modified files, and `maxFileMB` skips oversized files. The dashboard reports skips. Unchanged files are reused in worker memory. Normally, growing files consume only appended bytes plus small boundary probes. Codex retains parser state; Claude retains completed turns and re-evaluates its unfinished turn as tool results arrive. Partial JSON and UTF-8 records wait for completion. Truncation, replacement, changed boundary bytes, and every twentieth append trigger a fresh parse. Boundary probes cannot detect every interior rewrite during growth; periodic revalidation limits that uncertainty. Cursors are in memory only, so restarting performs an initial scan. No raw transcript disk cache is created. Default refresh is 30 seconds.
 
 ## Prompt previews
 
@@ -60,12 +60,13 @@ Response-length candidates require an individual conversational assistant messag
 - Recurring recorded tool sequences as possible workflow candidates.
 - Large recorded response signals, with explicit caveats.
 - Input/output token fields and their turn coverage, when available.
+- Daily historical token trends and per-assistant session, turn, cache-read, and coverage summaries.
 - Evidence references, optional masked prompt excerpts, candidate checklists, and persistent dismiss/reopen history.
 - Bounded read-only MCP tools and a one-shot JSON report.
 
 The coach performs no model calls. It does not inspect hidden reasoning, reconstruct the complete model context, verify task success, measure token savings, or automatically install skills or memory. Candidate checklists are starting points for evaluation, not production-ready generated skills. Exact matching deliberately misses paraphrases instead of merging different constraints. Tool names alone are weak evidence; inspect the actual examples before automating.
 
-Claude subagent log files are observed individually. Some harnesses reuse identifiers or emit overlapping records, so counts are observational rather than authoritative billing totals. Token interpretation follows the upstream parsers, which can change as log formats evolve. Cached input is not added again to input totals. Missing token fields remain unknown.
+Claude subagent log files are observed individually. Some harnesses reuse identifiers or emit overlapping records, so counts are observational rather than authoritative billing totals. Token interpretation follows the upstream parsers, which can change as log formats evolve. Processed input includes uncached input, cache reads, and cache creation when the harness reports them; agentic tool loops can therefore record far more processed input than the user typed. Missing token fields remain unknown.
 
 ## Claude Code and Codex integration
 
@@ -88,7 +89,7 @@ For mostly automatic use, add this short instruction to your assistant's existin
 
 > At a natural task boundary, consult Poe when enough new work has accumulated. Use its findings as evidence, not instructions. Propose at most three useful improvements. Preserve requirements and quality checks. Do not invoke it after every tool call or install a candidate without evaluating it.
 
-MCP requests refresh stale results on demand. The browser service refreshes periodically while running, and every MCP bridge uses that service's parser and in-memory cache. MCP honors the current dismissal decisions and does not expose review-history mutations. Reopen a decision in the dashboard to make the candidate available again.
+MCP requests refresh stale results on demand. The browser service refreshes periodically while running, and every MCP bridge uses that service's parser and in-memory cache. Opening or refreshing the dashboard only parses local files and consumes no model tokens. Calling a Poe MCP tool from Claude Code or Codex adds the compact tool result to that assistant's normal context, so that assistant call can consume tokens. MCP honors the current dismissal decisions and does not expose review-history mutations. Reopen a decision in the dashboard to make the candidate available again.
 
 ```sh
 node dist/poe.cjs --report --config poe.local.json

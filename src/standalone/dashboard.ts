@@ -5,6 +5,7 @@ import { IDEA_COPY, projectName, reviewPrompt } from './presentation';
 interface Snapshot { report?: CoachReport; error?: string; history: ReviewEvent[]; config: { lookbackDays: number; refreshSeconds: number; includeExcerpts: boolean } }
 const ICONS: Record<string, string[]> = {
   overview: ['M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z'],
+  usage: ['M4 19V9m5 10V5m5 14v-7m5 7V3'],
   spark: ['m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z'],
   skill: ['M4 5h6a3 3 0 0 1 3 3v13a4 4 0 0 0-4-3H4V5Zm9 3a3 3 0 0 1 3-3h5v13h-4a4 4 0 0 0-4 3'],
   memory: ['M8 3H5v18h14V6l-3-3H8Zm0 0v6h8V3M8 21v-7h8v7'],
@@ -36,6 +37,7 @@ const dialog = get('idea-dialog') as HTMLDialogElement;
 let snapshot: Snapshot | undefined;
 let view = 'overview';
 let kind = 'all';
+let usageRange = '30';
 let loading = false;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let lastRendered = '';
@@ -132,6 +134,83 @@ function openIdea(finding: Finding): void {
 function emptyState(title: string, description: string): HTMLElement {
   const node = element('div', '', 'empty'); node.append(element('h2', title), element('p', description)); return node;
 }
+const compact = (value: number) => Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+const assistantName = (name: string) => name.toLowerCase() === 'claude' ? 'Claude Code' : name;
+function activityAge(timestamp?: number): string {
+  if (!timestamp) return 'No dated activity';
+  const hours = Math.max(0, (Date.now() - timestamp) / 3600000);
+  return hours < 1 ? 'Active within the past hour' : hours < 24 ? `Active ${Math.floor(hours)} hours ago` : `Active ${Math.floor(hours / 24)} days ago`;
+}
+function renderAssistantActivity(): void {
+  const list = get('source-glance-list'); list.replaceChildren();
+  const entries = Object.entries(snapshot?.report?.usageHistory.byHarness || {}).sort(([a], [b]) => a === 'Claude' ? -1 : b === 'Claude' ? 1 : a.localeCompare(b));
+  for (const [name, data] of entries) {
+    const card = element('article', '', `assistant-card ${name.toLowerCase()}`);
+    const top = element('div', '', 'assistant-card-top');
+    const identity = element('div'); identity.append(element('span', name === 'Claude' ? 'C' : name.slice(0, 1), 'assistant-mark'), element('strong', assistantName(name)));
+    top.append(identity, element('span', activityAge(data.lastActivity), 'source-status'));
+    const recorded = data.input + data.output;
+    const cacheDetail = data.cacheRead ? ` · ${compact(data.cacheRead)} cache-read` : '';
+    card.append(top, element('b', `${data.sessions.toLocaleString()} sessions · ${data.turns.toLocaleString()} turns`), element('p', recorded ? `${compact(recorded)} tokens processed across loaded history${cacheDetail}` : 'Token fields are unavailable in the loaded logs.'));
+    list.append(card);
+  }
+  if (!entries.length) list.append(emptyState('No assistant history loaded', 'Check Connected sources, then refresh your sessions.'));
+}
+function usagePoints(): NonNullable<CoachReport['usageHistory']>['days'] {
+  const points = snapshot?.report?.usageHistory.days || [];
+  if (usageRange === 'all') return points;
+  const cutoff = Date.now() - Number(usageRange) * 86400000;
+  return points.filter(point => Date.parse(`${point.date}T23:59:59Z`) >= cutoff);
+}
+function svgNode<K extends keyof SVGElementTagNameMap>(name: K, attrs: Record<string, string> = {}): SVGElementTagNameMap[K] {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', name);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  return node;
+}
+function renderUsageChart(points: ReturnType<typeof usagePoints>): void {
+  const holder = get('usage-chart'); holder.replaceChildren();
+  if (!points.length) { holder.append(emptyState('No token records in this range', 'Try a wider range or check Connected sources.')); return; }
+  const dates = [...new Set(points.map(point => point.date))].sort();
+  const start = Date.parse(`${dates[0]}T00:00:00Z`); const end = Math.max(start + 86400000, Date.parse(`${dates.at(-1)}T00:00:00Z`));
+  const totals = new Map(points.map(point => [`${point.date}:${point.harness}`, point.input + point.output]));
+  const max = Math.max(1, ...totals.values()); const width = 920; const height = 286; const left = 62; const right = 18; const top = 20; const bottom = 42;
+  const x = (date: string) => left + (Date.parse(`${date}T00:00:00Z`) - start) / (end - start) * (width - left - right);
+  const y = (value: number) => top + (1 - value / max) * (height - top - bottom);
+  const svg = svgNode('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': 'Daily recorded token usage for Claude Code and Codex' });
+  for (let i = 0; i <= 4; i++) {
+    const value = max * (4 - i) / 4; const yy = top + i * (height - top - bottom) / 4;
+    svg.append(svgNode('line', { x1: String(left), y1: String(yy), x2: String(width - right), y2: String(yy), class: 'chart-grid' }));
+    const label = svgNode('text', { x: String(left - 10), y: String(yy + 4), class: 'chart-axis', 'text-anchor': 'end' }); label.textContent = compact(Math.round(value)); svg.append(label);
+  }
+  const labelDates = dates.filter((_, index) => index === 0 || index === dates.length - 1 || index % Math.max(1, Math.floor(dates.length / 4)) === 0).slice(0, 6);
+  for (const date of labelDates) { const label = svgNode('text', { x: String(x(date)), y: String(height - 13), class: 'chart-axis', 'text-anchor': 'middle' }); label.textContent = new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); svg.append(label); }
+  for (const [harness, className] of [['Claude', 'claude'], ['Codex', 'codex']] as const) {
+    const series = dates.map(date => ({ date, value: totals.get(`${date}:${harness}`) || 0 }));
+    const line = svgNode('polyline', { points: series.map(point => `${x(point.date)},${y(point.value)}`).join(' '), class: `usage-line ${className}` }); svg.append(line);
+    for (const point of series.filter(point => point.value > 0)) {
+      const circle = svgNode('circle', { cx: String(x(point.date)), cy: String(y(point.value)), r: '4', class: `usage-point ${className}` });
+      const title = svgNode('title'); title.textContent = `${assistantName(harness)} · ${point.date}: ${point.value.toLocaleString()} recorded tokens`; circle.append(title); svg.append(circle);
+    }
+  }
+  holder.append(svg);
+}
+function renderUsage(): void {
+  if (!snapshot?.report) return;
+  const points = usagePoints(); const input = points.reduce((sum, point) => sum + point.input, 0); const output = points.reduce((sum, point) => sum + point.output, 0); const cacheRead = points.reduce((sum, point) => sum + point.cacheRead, 0); const turns = points.reduce((sum, point) => sum + point.turns, 0); const inputTurns = points.reduce((sum, point) => sum + point.turnsWithInput, 0); const outputTurns = points.reduce((sum, point) => sum + point.turnsWithOutput, 0);
+  text('usage-total', compact(input + output)); text('usage-input', compact(input)); text('usage-output', compact(output));
+  text('usage-total-detail', `${turns.toLocaleString()} turns in the selected range`); text('usage-input-coverage', `${inputTurns} of ${turns} turns · ${compact(cacheRead)} cache-read`); text('usage-output-coverage', `${outputTurns} of ${turns} turns include output data`);
+  const dates = points.map(point => point.date).sort(); text('usage-chart-summary', dates.length ? `${dates[0]} to ${dates.at(-1)} · recorded fields only` : 'No records in this range');
+  renderUsageChart(points);
+  const breakdown = get('usage-breakdown'); breakdown.replaceChildren();
+  for (const name of ['Claude', 'Codex']) {
+    const rows = points.filter(point => point.harness === name); const row = element('article', '', `usage-breakdown-row ${name.toLowerCase()}`);
+    const total = rows.reduce((sum, point) => sum + point.input + point.output, 0); const rowInput = rows.reduce((sum, point) => sum + point.input, 0); const rowCache = rows.reduce((sum, point) => sum + point.cacheRead, 0); const rowTurns = rows.reduce((sum, point) => sum + point.turns, 0); const known = rows.reduce((sum, point) => sum + Math.max(point.turnsWithInput, point.turnsWithOutput), 0);
+    const identity = element('div', '', 'usage-assistant'); identity.append(element('span', name === 'Claude' ? 'C' : 'Cdx', 'assistant-mark'), element('strong', assistantName(name)));
+    const coverage = rowTurns ? `${Math.min(100, Math.round(known / rowTurns * 100))}% coverage` : 'No turns'; const cache = rowInput && rowCache ? ` · ${Math.round(rowCache / rowInput * 100)}% cache-read` : '';
+    row.append(identity, element('span', `${rowTurns.toLocaleString()} turns`, 'usage-cell'), element('span', total ? compact(total) : 'Unknown', 'usage-cell strong'), element('span', coverage + cache, 'usage-cell muted')); breakdown.append(row);
+  }
+  if (view === 'usage') text('period', usageRange === 'all' ? 'All loaded history' : `Last ${usageRange} days`);
+}
 function renderFindings(): void {
   const active = activeFindings(); text('nav-count', String(active.length));
   const short = get('overview-list'); short.replaceChildren(...active.slice(0, 3).map(preview));
@@ -154,10 +233,9 @@ function renderFindings(): void {
 function renderMetrics(): void {
   if (!snapshot?.report) return;
   const { report, config } = snapshot; const tokens = report.recordedTokens;
-  const format = (value: number) => Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
   text('sessions', report.sessionCount.toLocaleString()); text('window', `${report.requestCount.toLocaleString()} recorded turns`);
-  text('input', tokens.turnsWithInput ? format(tokens.input) : 'Unknown'); get('input').title = tokens.input.toLocaleString();
-  text('output', tokens.turnsWithOutput ? format(tokens.output) : 'Unknown'); get('output').title = tokens.output.toLocaleString();
+  text('input', tokens.turnsWithInput ? compact(tokens.input) : 'Unknown'); get('input').title = tokens.input.toLocaleString();
+  text('output', tokens.turnsWithOutput ? compact(tokens.output) : 'Unknown'); get('output').title = tokens.output.toLocaleString();
   text('coverage', `${tokens.turnsWithInput} of ${report.requestCount} turns include input data`);
   text('output-coverage', `${tokens.turnsWithOutput} of ${report.requestCount} turns include output data`);
   const reviewed = report.responseReview;
@@ -186,7 +264,9 @@ function renderSources(): void {
   const list = get('source-list'); list.replaceChildren();
   for (const source of report.sources) {
     const row = element('article', '', 'source-row'); const copy = element('div', '', 'source-copy');
-    copy.append(element('strong', source.harness === 'claude' ? 'Claude Code' : 'Codex'), element('code', source.root));
+    const label = source.harness === 'claude' ? 'Claude Code' : 'Codex'; const activity = report.usageHistory.byHarness[source.harness === 'claude' ? 'Claude' : 'Codex'];
+    copy.append(element('strong', label), element('code', source.root));
+    if (activity) copy.append(element('p', `${activity.sessions.toLocaleString()} sessions · ${activity.turns.toLocaleString()} turns · ${activityAge(activity.lastActivity)}`, 'source-activity'));
     row.append(icon('sources'), copy, element('span', source.exists ? 'Available' : 'Folder not found', 'source-status')); list.append(row);
   }
   if (!report.sources.length) list.append(emptyState('No sources enabled', 'Enable Claude Code or Codex in your local configuration to begin observing sessions.'));
@@ -194,9 +274,10 @@ function renderSources(): void {
   get('scan-warnings').replaceChildren(...report.scan.warnings.map(warning => element('p', warning)));
   text('excerpt-setting', snapshot?.config.includeExcerpts ? 'Short prompt and recorded-reasoning previews are enabled. Secret masking is best effort.' : 'Prompt and recorded-reasoning previews are off. Set "includeExcerpts": true in poe.local.json and restart Poe to show short, masked excerpts.');
 }
-function render(): void { renderMetrics(); renderFindings(); renderHistory(); renderSources(); }
+function render(): void { renderMetrics(); renderAssistantActivity(); renderUsage(); renderFindings(); renderHistory(); renderSources(); }
 const PAGES: Record<string, [string, string, string]> = {
   overview: ['Overview', 'Your workflow, at a glance.', 'See what repeats. Choose what to improve.'],
+  usage: ['Token usage', 'See how your AI usage changes.', 'Compare recorded Claude Code and Codex activity over time.'],
   findings: ['Opportunities', 'Find your next improvement.', 'Review a pattern, check the examples, then decide what to try.'],
   history: ['Review history', 'Your decisions, in one place.', 'Keep a record of the ideas you have reviewed.'],
   sources: ['Connected sources', 'Connected to the way you work.', 'A transparent view of what Poe can observe.'],
@@ -205,9 +286,10 @@ function navigate(): void {
   const target = location.hash.slice(1); view = Object.hasOwn(PAGES, target) ? target : 'overview';
   const [label, title, description] = PAGES[view];
   text('breadcrumb', `Workspace / ${label}`); text('page-eyebrow', label.toUpperCase()); text('page-title', title); text('page-description', description);
-  for (const [page, section] of [['overview', 'overview'], ['findings', 'opportunities'], ['history', 'history'], ['sources', 'sources']]) get(section).hidden = page !== view;
+  for (const [page, section] of [['overview', 'overview'], ['usage', 'usage'], ['findings', 'opportunities'], ['history', 'history'], ['sources', 'sources']]) get(section).hidden = page !== view;
   for (const link of document.querySelectorAll<HTMLAnchorElement>('nav a')) { if (link.dataset.view === view) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); }
   render();
+  if (view !== 'usage' && snapshot?.report) text('period', `Active: last ${snapshot.report.activeWindowDays || 5} days`);
 }
 async function load(force = false): Promise<void> {
   if (loading) return; loading = true;
@@ -228,5 +310,6 @@ get('refresh').addEventListener('click', () => {
   const button = get('refresh') as HTMLButtonElement; button.disabled = true; button.setAttribute('aria-busy', 'true');
   void post('/api/refresh', {}).then(() => { notify('Checking your sessions. Results will update shortly.'); return load(); }).catch(showError).finally(() => { button.disabled = false; button.removeAttribute('aria-busy'); });
 });
+(get('usage-range') as HTMLSelectElement).addEventListener('change', event => { usageRange = (event.currentTarget as HTMLSelectElement).value; renderUsage(); });
 navigate(); void load().catch(showError);
 setInterval(() => { if (!document.hidden && !dialog.open && !document.querySelector('details[open]') && !get('main').contains(document.activeElement)) void load().catch(showError); }, 5000);

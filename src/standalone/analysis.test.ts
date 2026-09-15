@@ -71,3 +71,21 @@ it('requires enough current evidence even when a wider history window is configu
   expect(analyzeEfficiency(sessions, config, now).findings[0].occurrences).toBe(3);
   expect(analyzeEfficiency(sessions, config, now + 1).findings).toEqual([]);
 });
+
+it('keeps historical usage separate from the five-day coaching window', () => {
+  const recent = session('recent');
+  recent.requests[0].promptTokens = 120;
+  recent.requests[0].completionTokens = 30;
+  const older = session('older');
+  older.harness = 'Claude';
+  older.requests[0].timestamp = now - 30 * 86400000;
+  older.requests[0].promptTokens = 400;
+  older.requests[0].completionTokens = 80;
+  older.requests[0].cacheReadTokens = 300;
+  older.requests[0].cacheWriteTokens = 20;
+  const report = analyzeEfficiency([recent, older], config, now);
+  expect(report.requestCount).toBe(1);
+  expect(report.usageHistory.byHarness.Claude).toMatchObject({ sessions: 1, turns: 1, input: 400, output: 80, cacheRead: 300, cacheWrite: 20 });
+  expect(report.usageHistory.byHarness.Codex).toMatchObject({ sessions: 1, turns: 1, input: 120, output: 30 });
+  expect(report.usageHistory.days).toHaveLength(2);
+});
