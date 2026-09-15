@@ -5,6 +5,7 @@ import { coachConfigSchema, type CoachConfig } from '../standalone/config';
 import { createClaudeAccumulator } from './parser-claude';
 import { createCodexAccumulator } from './parser-codex';
 import { assertTrustedPath } from './parser-shared';
+import { observeTools } from './tool-activity';
 import { IncrementalLog } from './incremental-log';
 import type { Session } from './types';
 
@@ -69,9 +70,9 @@ export function scanEfficiency(input: unknown): CoachReport {
     else {
       try {
         // A cursor retains parser state; only new records enter the parser on normal appends.
-        const reader = item?.reader || new IncrementalLog(() => entry.harness === 'codex'
+        const reader = item?.reader || new IncrementalLog(() => observeTools(entry.harness === 'codex'
           ? createCodexAccumulator(entry.file)
-          : createClaudeAccumulator(entry.file, path.dirname(entry.file), path.basename(path.dirname(entry.file))));
+          : createClaudeAccumulator(entry.file, path.dirname(entry.file), path.basename(path.dirname(entry.file))), entry.harness));
         assertTrustedPath(entry.file, [entry.root]);
         const result = reader.read(entry.file);
         bytesRead += result.bytesRead;

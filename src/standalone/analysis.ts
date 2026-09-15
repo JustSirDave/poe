@@ -1,16 +1,17 @@
 import { createHash } from 'node:crypto';
 import type { Session, SessionRequest } from '../core/types';
 import { responseContexts, type RequestContext } from './request-context';
+import { sessionFindings } from './session-findings';
 import { redactSecrets } from '../core/redact-secrets';
 import type { CoachConfig } from './config';
 
-export interface Evidence { sessionId: string; requestId: string; harness: string; workspace: string; timestamp: number | null; contextRequestId?: string; excerpt?: string }
+export interface Evidence { sessionId: string; requestId: string; harness: string; workspace: string; timestamp: number | null; contextRequestId?: string; toolCallIds?: string[]; excerpt?: string }
 export interface Finding {
   id: string;
   firstSeen?: number;
   lastSeen?: number;
   responseIntent?: 'unclassified' | 'brevity-conflict';
-  kind: 'skill' | 'memory' | 'workflow' | 'output';
+  kind: 'skill' | 'memory' | 'workflow' | 'output' | 'session';
   title: string;
   explanation: string;
   occurrences: number;
@@ -27,6 +28,7 @@ export interface CoachReport {
   sessionCount: number;
   latestSessionActivity?: number;
   activeWindowDays?: number;
+  toolSignalCoverage?: { retained: number; dropped: number };
   requestCount: number;
   harnesses: Record<string, number>;
   recordedTokens: { input: number; output: number; turnsWithInput: number; turnsWithOutput: number };
@@ -47,7 +49,7 @@ function evidence(turn: Turn, excerpts: boolean): Evidence {
   };
 }
 
-function createFinding(kind: Finding['kind'], key: string, turns: Turn[], config: CoachConfig): Finding {
+function createFinding(kind: Exclude<Finding['kind'], 'session'>, key: string, turns: Turn[], config: CoachConfig): Finding {
   const descriptions = {
     skill: ['Repeated instruction', 'The same substantial instruction appears in multiple sessions.', 'Turn the repeated procedure into a focused skill, or a script when its steps are deterministic.', 'Repetition can be intentional. A skill saves tokens only if it reduces loaded context or retries.'],
     memory: ['Repeated preference', 'The same instruction containing preference language appears in multiple sessions.', 'Confirm the preference is durable, then store a short scoped memory with a clear exception.', 'Do not turn a temporary task instruction into a permanent preference.'],
@@ -107,7 +109,7 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
       else { responseReview.unclassified++; large.push(turn); }
     }
   }
-  const findings: Finding[] = [];
+  const findings: Finding[] = sessionFindings(sessions, cutoff, now);
   for (const [key, group] of promptGroups) {
     if (group.length < config.minOccurrences || new Set(group.map(t => t.session.sessionId)).size < 2) continue;
     const kind = /\b(always|never|remember|prefer|from now on)\b/i.test(group[0].request.messageText) ? 'memory' : 'skill';
@@ -126,8 +128,9 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
     finding.draft += '\nState each finding fully once; use finding IDs in summaries. Preserve evidence, required explanations, and verification limits.\n';
     findings.push(finding);
   }
-  findings.sort((a, b) => b.occurrences - a.occurrences || a.id.localeCompare(b.id));
+  findings.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0) || b.occurrences - a.occurrences || a.id.localeCompare(b.id));
   return {
+    toolSignalCoverage: { retained: sessions.reduce((n, s) => n + (s.toolActivity?.length || 0), 0), dropped: sessions.reduce((n, s) => n + (s.toolActivityDropped || 0), 0) },
     activeWindowDays,
     latestSessionActivity: sessions.filter(s => s.sessionOrigin !== 'guardian').reduce((latest, s) => Math.max(latest, s.lastMessageDate || 0), 0) || undefined,
     generatedAt: new Date(now).toISOString(), sessionCount: new Set(turns.map(t => `${t.session.harness}:${t.session.sessionId}`)).size,

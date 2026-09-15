@@ -41,7 +41,7 @@ export function createMcpHandler(service: CoachService): (input: unknown) => Pro
       const states = new Map(reviews.history().map(event => [event.id, event.action]));
       const active = report.findings.filter(finding => states.get(finding.id) !== 'dismissed');
       let data: unknown;
-      if (params.name === 'coach_summary') data = { generatedAt: report.generatedAt, sessions: report.sessionCount, turns: report.requestCount, recordedTokens: report.recordedTokens, candidateCount: active.length, responseReview: report.responseReview, scan: report.scan, limitation: 'Token fields may be partial and are not savings or billing. No internal context visibility or task-quality measurement.' };
+      if (params.name === 'coach_summary') data = { generatedAt: report.generatedAt, sessions: report.sessionCount, turns: report.requestCount, recordedTokens: report.recordedTokens, candidateCount: active.length, responseReview: report.responseReview, toolSignalCoverage: report.toolSignalCoverage, activeWindowDays: report.activeWindowDays, scan: report.scan, limitation: 'Token fields may be partial and are not savings or billing. No internal context visibility or task-quality measurement.' };
       else if (params.name === 'coach_findings') data = active.slice(0, limit).map(({ draft: _draft, ...finding }) => finding);
       else { const finding = active.find(f => f.id === proposalId); if (!finding) throw new Error('Finding not found'); data = finding; }
       return response({ content: [{ type: 'text', text: redactSecrets(JSON.stringify(data)) }] });

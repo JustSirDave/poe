@@ -123,6 +123,8 @@ export interface CodeBlock {
 export type SessionEndReason = 'shutdown' | 'active' | 'aborted' | 'unknown';
 
 export interface Session {
+  toolActivity?: import('../tool-activity').ToolActivity[];
+  toolActivityDropped?: number;
   /** Recorded internal session origin, when available. */
   sessionOrigin?: string;
   sessionId: string;

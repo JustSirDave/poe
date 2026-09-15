@@ -18,6 +18,10 @@ for (let i = 0; i < 3; i++) {
     {type:'event_msg',timestamp,payload:{type:'assistant_message',text:'This is a synthetic response. '.repeat(500)}},
     {type:'event_msg',timestamp,payload:{type:'token_count',info:{total_token_usage:{input_tokens:100,output_tokens:50,cached_input_tokens:0}}}},
   ];
+  if (i === 0) for (const id of ['fail-a', 'fail-b']) {
+    lines.push({type:'response_item',timestamp,payload:{type:'function_call',call_id:id,name:'exec_command',arguments:JSON.stringify({cmd:'synthetic failing command'})}});
+    lines.push({type:'response_item',timestamp,payload:{type:'function_call_output',call_id:id,output:'Process exited with code 1\nSynthetic failure'}});
+  }
   await fs.writeFile(path.join(logs,`session-${i}.jsonl`),lines.map(line=>JSON.stringify(line)).join('\n'));
 }
 const config = path.join(root,'coach.local.json');
@@ -56,6 +60,7 @@ try {
   const report=JSON.parse(await collect(launch(['--report'])));
   assert.equal(report.sessionCount,3);assert.equal(report.requestCount,3);
   assert(report.findings.some(f=>f.kind==='skill'));assert(!JSON.stringify(report).includes(message));
+  assert(report.findings.some(f=>f.kind==='session' && f.evidence[0].toolCallIds.includes('fail-a')));
   let {child,url}=await start();
   const first=await reportAt(url);
   assert.equal(first.report.requestCount,3);
@@ -83,6 +88,10 @@ try {
       await page.getByRole('link',{name:'Connected sources',exact:true}).click();
       await page.getByRole('heading',{name:'Your session folders'}).waitFor();
       await page.getByRole('link',{name:/^Opportunities/}).click();
+      await page.getByRole('button',{name:/^Session signals/}).click();
+      await page.getByRole('button',{name:'Review idea →'}).first().click();
+      await page.getByRole('dialog').getByRole('heading',{name:'Same action failed repeatedly',exact:true}).waitFor();
+      await page.keyboard.press('Escape');
       await page.getByRole('button',{name:/^Skills/}).click();
       await page.getByRole('button',{name:'Review idea →'}).first().click();
       await page.getByRole('heading',{name:'What the coach noticed'}).waitFor();
@@ -94,7 +103,7 @@ try {
       await page.getByRole('button',{name:'Review idea →'}).first().click();
       await page.getByLabel('Reason for dismissing this idea').selectOption('expected');
       await page.getByRole('button',{name:'Dismiss idea'}).click();
-      await page.getByRole('heading',{name:/No ideas in this category|Nothing needs a closer look yet/}).waitFor();
+      await page.getByRole('heading',{name:/No ideas in this category|No matching patterns detected/}).waitFor();
       await page.getByRole('link',{name:'Review history',exact:true}).click();
       assert((await reportAt(url)).history.some(event=>event.reason==='expected'));
       await page.getByRole('button',{name:'Reopen idea'}).first().click();

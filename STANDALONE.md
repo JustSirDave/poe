@@ -119,3 +119,11 @@ Richer observed tool events (arguments, results, failures), paraphrase clusterin
 ### Current activity first
 
 Recommendations and overview totals use at most the last five days, even when `lookbackDays` is larger. Older turns can establish the original task behind a current continuation, but cannot increase occurrence counts or trigger findings. The default refresh interval is 30 seconds; processing starts after the assistant writes events to its local log, so this is near-real-time observation, not access to live internal thinking. Examples show their age and mark activity within the past hour.
+
+### Signals within one session
+
+Poe also reviews activity within individual sessions. It flags two identical failed calls, three tool errors in a ten-minute burst, or three identical completed calls with identical recorded output in ten minutes. Repeated-read signals reset when another kind of tool runs. Polling/wait/status tools are excluded. Pending calls are not failures. A nonzero command exit is an observation to review, not proof that the command was inappropriate.
+
+Explicit user corrections can surface a possible missed instruction; Poe does not establish general instruction compliance or infer intent from internal reasoning. Tool references are included in copied review prompts and MCP findings. Findings remain candidates and never automatically change project code, skills, or instructions.
+
+The observer supports standard Codex function/custom-tool records and Claude tool-use/result blocks. Embedded tool calls inside scripts, imported prose transcripts, and other unsupported formats may not be visible. It retains at most 2,000 call records per session, including hashes of arguments and outputs, with no raw argument/output payloads in those records. Connected sources reports retained and omitted counts. The five-day action window still applies, and old events cannot meet a detection threshold. Empty results mean no supported pattern matched, not that the work is error-free.

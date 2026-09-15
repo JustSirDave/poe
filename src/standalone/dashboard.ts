@@ -79,14 +79,14 @@ function card(finding: Finding): HTMLElement {
   const copy = IDEA_COPY[finding.kind];
   const node = element('article', '', 'idea-card'); const top = element('div', '', 'idea-card-top');
   top.append(kindIcon(finding), element('span', copy.label, 'badge'));
-  node.append(top, element('h2', finding.responseIntent === 'unclassified' ? 'Long messages with unclear intent' : copy.title), element('p', finding.responseIntent === 'unclassified' ? 'These are unclassified observations, not evidence of waste.' : copy.benefit), meta(finding));
+  node.append(top, element('h2', finding.kind === 'session' ? finding.title : finding.responseIntent === 'unclassified' ? 'Long messages with unclear intent' : copy.title), element('p', finding.responseIntent === 'unclassified' ? 'These are unclassified observations, not evidence of waste.' : copy.benefit), meta(finding));
   const footer = element('div', '', 'card-footer');
   footer.append(element('span', 'Suggested · ready to review'), action('Review idea →', () => openIdea(finding), 'button-primary'));
   node.append(footer); return node;
 }
 function preview(finding: Finding): HTMLElement {
   const row = element('article', '', 'preview-row'); const copy = element('div', '', 'row-copy');
-  copy.append(element('h3', IDEA_COPY[finding.kind].title), element('p', `${finding.occurrences} occurrences · ${finding.sessionCount} sessions`));
+  copy.append(element('h3', finding.kind === 'session' ? finding.title : IDEA_COPY[finding.kind].title), element('p', `${finding.occurrences} occurrences · ${finding.sessionCount} sessions`));
   const button = action('', () => openIdea(finding)); button.setAttribute('aria-label', `Review ${IDEA_COPY[finding.kind].label.toLowerCase()} idea`); button.append(icon('arrow'));
   row.append(kindIcon(finding), copy, button); return row;
 }
@@ -97,7 +97,7 @@ function step(title: string, description: string, number: string, recommended = 
 }
 function openIdea(finding: Finding): void {
   const copy = IDEA_COPY[finding.kind]; const body = get('idea-body'); body.replaceChildren();
-  text('idea-kind', copy.label); const title = element('h2', finding.responseIntent === 'unclassified' ? 'Long messages with unclear intent' : copy.title); title.id = 'idea-title';
+  text('idea-kind', copy.label); const title = element('h2', finding.kind === 'session' ? finding.title : finding.responseIntent === 'unclassified' ? 'Long messages with unclear intent' : copy.title); title.id = 'idea-title';
   body.append(title, meta(finding), step('What the coach noticed', finding.explanation, '1'), step('Why it may help', copy.benefit, '2'), step('What to try', copy.next, '3', true));
   const examples = element('section', '', 'review-section'); examples.append(element('h3', 'Session examples'));
   examples.append(element('p', `Showing ${finding.evidence.length} latest matching examples within the active ${snapshot?.report?.activeWindowDays || 5}-day window. Older sessions can explain task context but do not count toward recommendations.`));
@@ -109,7 +109,7 @@ function openIdea(finding: Finding): void {
     const age = ageHours === null ? '' : ageHours < 1 ? ' · Within the past hour' : ageHours < 24 ? ` · ${Math.floor(ageHours)} hours ago` : ` · ${Math.floor(ageHours / 24)} days ago`;
     row.append(element('strong', `${item.harness === 'Claude' ? 'Claude Code' : item.harness} · ${projectName(item.workspace)}`), element('p', date + age));
     if (item.excerpt) row.append(element('blockquote', item.excerpt));
-    const refs = element('details', '', 'technical'); refs.append(element('summary', 'Session reference'), element('code', `Project: ${item.workspace}\nSession: ${item.sessionId}\nRequest: ${item.requestId}\nTask context: ${item.contextRequestId || item.requestId}`)); row.append(refs); examples.append(row);
+    const refs = element('details', '', 'technical'); refs.append(element('summary', 'Session reference'), element('code', `Project: ${item.workspace}\nSession: ${item.sessionId}\nRequest: ${item.requestId}\nTask context: ${item.contextRequestId || item.requestId}${item.toolCallIds?.length ? '\nTool calls: ' + item.toolCallIds.join(', ') : ''}`)); row.append(refs); examples.append(row);
   }
   body.append(examples, step('Before making a change', finding.caution, '4'));
   body.append(element('p', 'Copy the review prompt and paste it into Claude Code or Codex. It asks your assistant to inspect the evidence and propose a small change.', 'dialog-help'));
@@ -137,13 +137,13 @@ function renderFindings(): void {
   const list = get('findings'); const selected = active.filter(f => kind === 'all' || f.kind === kind); list.replaceChildren(...selected.map(card));
   text('result-count', `${selected.length} ${selected.length === 1 ? 'idea' : 'ideas'} to review`);
   if (!active.length) {
-    const title = !snapshot?.report ? 'Reading your sessions' : snapshot.report.requestCount ? 'Nothing needs a closer look yet' : 'No recent sessions found';
-    const description = snapshot?.report?.requestCount ? 'No active ideas meet the evidence threshold. Keep working; the coach checks automatically.' : 'Check Connected sources to see which session folders are available.';
+    const title = !snapshot?.report ? 'Reading your sessions' : snapshot.report.requestCount ? 'No matching patterns detected' : 'No recent sessions found';
+    const description = snapshot?.report?.requestCount ? 'No current activity matches the supported rules. This does not mean the session is error-free; some tool formats and instruction problems cannot be detected.' : 'Check Connected sources to see which session folders are available.';
     short.append(emptyState(title, description));
     list.append(emptyState(title, description));
   } else if (!selected.length) list.append(emptyState('No ideas in this category', 'Try another filter to explore the other patterns in your sessions.'));
   const filters = get('kind-filters'); filters.replaceChildren();
-  const labels: [string, string][] = [['all', 'All ideas'], ['skill', 'Skills'], ['memory', 'Memory'], ['workflow', 'Workflows'], ['output', 'Response length']];
+  const labels: [string, string][] = [['all', 'All ideas'], ['skill', 'Skills'], ['memory', 'Memory'], ['workflow', 'Workflows'], ['output', 'Response length'], ['session', 'Session signals']];
   for (const [value, label] of labels) {
     const count = value === 'all' ? active.length : active.filter(f => f.kind === value).length;
     const button = action(`${label} (${count})`, () => { kind = value; renderFindings(); get('kind-filters').querySelector<HTMLButtonElement>('[aria-pressed=true]')?.focus(); }, 'filter');
@@ -189,7 +189,7 @@ function renderSources(): void {
     row.append(icon('sources'), copy, element('span', source.exists ? 'Available' : 'Folder not found', 'source-status')); list.append(row);
   }
   if (!report.sources.length) list.append(emptyState('No sources enabled', 'Enable Claude Code or Codex in your local configuration to begin observing sessions.'));
-  text('scan-details', `Latest recorded session activity: ${report.latestSessionActivity ? new Date(report.latestSessionActivity).toLocaleString() : 'unavailable'}. ${report.excludedInternalSessions || 0} internal approval-review sessions excluded from coaching. ${report.scan.incremental || 0} logs updated incrementally · ${(report.scan.bytesRead || 0).toLocaleString()} bytes read. ${report.responseReview?.requestedDetail || 0} long messages matched requested detail; ${report.responseReview?.unclassified || 0} remain unclassified. ${report.scan.files} files discovered · ${report.scan.parsed} parsed on this scan · ${report.scan.reused} reused · ${report.scan.skipped} skipped. Skips can include empty, unsupported, or oversized files.`);
+  text('scan-details', `${report.toolSignalCoverage?.retained || 0} tool-call records available for session signals; ${report.toolSignalCoverage?.dropped || 0} older records omitted by the per-session limit. Unsupported tool formats may be absent. Latest recorded session activity: ${report.latestSessionActivity ? new Date(report.latestSessionActivity).toLocaleString() : 'unavailable'}. ${report.excludedInternalSessions || 0} internal approval-review sessions excluded from coaching. ${report.scan.incremental || 0} logs updated incrementally · ${(report.scan.bytesRead || 0).toLocaleString()} bytes read. ${report.responseReview?.requestedDetail || 0} long messages matched requested detail; ${report.responseReview?.unclassified || 0} remain unclassified. ${report.scan.files} files discovered · ${report.scan.parsed} parsed on this scan · ${report.scan.reused} reused · ${report.scan.skipped} skipped. Skips can include empty, unsupported, or oversized files.`);
   get('scan-warnings').replaceChildren(...report.scan.warnings.map(warning => element('p', warning)));
   text('excerpt-setting', snapshot?.config.includeExcerpts ? 'Short prompt previews are enabled. Secret masking is best effort.' : 'Prompt previews are off. Set "includeExcerpts": true in coach.local.json and restart with --config coach.local.json to show short, masked excerpts.');
 }
