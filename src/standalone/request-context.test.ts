@@ -25,3 +25,14 @@ describe('request-aware response review', () => {
     expect(responseContexts([turn('annotation', 'Write a detailed report. ## My request: Fix the label.')]).get('annotation')?.intent).toBe('unclassified');
   });
 });
+
+it('keeps audit intent when unrelated cautions use negative wording', () => {
+  const requests = [
+    turn('repo', "1. Analyze the repo (don't assume from the README alone). 2. **Give me a critical report** covering architecture."),
+    turn('backend', 'You are an engineer auditing this backend for production readiness. Do not write exploit-ready payloads. Deliverables: Executive Summary, API Inventory, findings and final verdict.'),
+    turn('resume', 'resume what you were doing'),
+    turn('database', 'You are an engineer conducting a joint, enterprise-grade audit of the database. Do not accept documented claims without checking. Deliverables: schema inventory, findings, negative tests and final verdict.'),
+  ];
+  expect([...responseContexts(requests).values()].every(context => context.intent === 'requested-detail')).toBe(true);
+  expect(responseContexts([turn('skip', 'Do not write a report. Fix the issue.')]).get('skip')?.intent).toBe('unclassified');
+});

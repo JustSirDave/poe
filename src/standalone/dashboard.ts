@@ -1,3 +1,4 @@
+// cspell:ignore describedby
 import type { CoachReport, Finding } from './analysis';
 import type { ReviewEvent } from './reviews';
 import { IDEA_COPY, projectName, reviewPrompt } from './presentation';
@@ -95,10 +96,11 @@ function openIdea(finding: Finding): void {
   text('idea-kind', copy.label); const title = element('h2', finding.responseIntent === 'unclassified' ? 'Long messages with unclear intent' : copy.title); title.id = 'idea-title';
   body.append(title, meta(finding), step('What the coach noticed', finding.explanation, '1'), step('Why it may help', copy.benefit, '2'), step('What to try', copy.next, '3', true));
   const examples = element('section', '', 'review-section'); examples.append(element('h3', 'Session examples'));
+  examples.append(element('p', `Showing ${finding.evidence.length} recent examples from different sessions within the last ${snapshot?.config.lookbackDays || 30} days. Older matches remain until they leave that window. Project folder names are not activity dates.`));
   if (!finding.evidence.some(item => item.excerpt)) examples.append(element('p', 'Prompt previews are off. In coach.local.json, set "includeExcerpts": true, then restart the coach with --config coach.local.json. Previews are short and secret masking is best effort.'));
   for (const item of finding.evidence) {
     const row = element('div', '', 'evidence-row');
-    const date = item.timestamp ? new Date(item.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Date unavailable';
+    const date = item.timestamp ? new Date(item.timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Date unavailable';
     row.append(element('strong', `${item.harness === 'Claude' ? 'Claude Code' : item.harness} · ${projectName(item.workspace)}`), element('p', date));
     if (item.excerpt) row.append(element('blockquote', item.excerpt));
     const refs = element('details', '', 'technical'); refs.append(element('summary', 'Session reference'), element('code', `Project: ${item.workspace}\nSession: ${item.sessionId}\nRequest: ${item.requestId}\nTask context: ${item.contextRequestId || item.requestId}`)); row.append(refs); examples.append(row);
@@ -111,7 +113,10 @@ function openIdea(finding: Finding): void {
   for (const [value, label] of [['not-now', 'Not now'], ['useful', 'Useful — reviewed'], ['expected', 'Expected behavior'], ['incorrect', 'Incorrect suggestion']]) {
     const option = element('option', label); option.value = value; reason.append(option);
   }
-  actions.append(reason);
+  const feedback = element('div', '', 'feedback-field');
+  const label = element('label', 'Reason for dismissal'); label.htmlFor = reason.id;
+  const help = element('small', 'Saved only when you click Dismiss idea. All reasons hide this idea until you reopen it.'); help.id = 'feedback-help'; reason.setAttribute('aria-describedby', help.id);
+  feedback.append(label, reason, help); actions.append(feedback);
   actions.append(action('Copy review prompt', async () => { await navigator.clipboard.writeText(reviewPrompt(finding)); notify('Review prompt copied. Paste it into Claude Code or Codex.'); }, 'button-primary'), action('Dismiss idea', async () => {
     await post('/api/review', { id: finding.id, action: 'dismissed', reason: reason.value }); dialog.close(); await load(true); notify('Idea dismissed. You can reopen it in Review history.');
   }, 'button-quiet'));
@@ -178,7 +183,7 @@ function renderSources(): void {
     row.append(icon('sources'), copy, element('span', source.exists ? 'Available' : 'Folder not found', 'source-status')); list.append(row);
   }
   if (!report.sources.length) list.append(emptyState('No sources enabled', 'Enable Claude Code or Codex in your local configuration to begin observing sessions.'));
-  text('scan-details', `${report.excludedInternalSessions || 0} internal approval-review sessions excluded from coaching. ${report.scan.incremental || 0} logs updated incrementally · ${(report.scan.bytesRead || 0).toLocaleString()} bytes read. ${report.responseReview?.requestedDetail || 0} long messages matched requested detail; ${report.responseReview?.unclassified || 0} remain unclassified. ${report.scan.files} files discovered · ${report.scan.parsed} parsed on this scan · ${report.scan.reused} reused · ${report.scan.skipped} skipped. Skips can include empty, unsupported, or oversized files.`);
+  text('scan-details', `Latest recorded session activity: ${report.latestSessionActivity ? new Date(report.latestSessionActivity).toLocaleString() : 'unavailable'}. ${report.excludedInternalSessions || 0} internal approval-review sessions excluded from coaching. ${report.scan.incremental || 0} logs updated incrementally · ${(report.scan.bytesRead || 0).toLocaleString()} bytes read. ${report.responseReview?.requestedDetail || 0} long messages matched requested detail; ${report.responseReview?.unclassified || 0} remain unclassified. ${report.scan.files} files discovered · ${report.scan.parsed} parsed on this scan · ${report.scan.reused} reused · ${report.scan.skipped} skipped. Skips can include empty, unsupported, or oversized files.`);
   get('scan-warnings').replaceChildren(...report.scan.warnings.map(warning => element('p', warning)));
   text('excerpt-setting', snapshot?.config.includeExcerpts ? 'Short prompt previews are enabled. Secret masking is best effort.' : 'Prompt previews are off. Set "includeExcerpts": true in coach.local.json and restart with --config coach.local.json to show short, masked excerpts.');
 }

@@ -45,3 +45,15 @@ describe('efficiency candidates', () => {
     expect(() => resolveConfig({ includeExcerpt: true }, process.cwd())).toThrow();
   });
 });
+
+it('samples recent distinct sessions instead of the first three matching turns', () => {
+  const older = session('old'); older.requests[0].timestamp = now - 5000;
+  older.requests.push({ ...older.requests[0], requestId: 'old-2' }, { ...older.requests[0], requestId: 'old-3' });
+  const newer = session('new'); newer.requests[0].timestamp = now - 100;
+  const middle = session('middle'); middle.requests[0].timestamp = now - 1000;
+  const finding = analyzeEfficiency([older, newer, middle], config, now).findings[0];
+  expect(finding.evidence.map(item => item.sessionId)).toEqual(['new', 'middle', 'old']);
+  expect(finding.occurrences).toBe(5);
+  expect(finding.firstSeen).toBe(now - 5000);
+  expect(finding.lastSeen).toBe(now - 100);
+});

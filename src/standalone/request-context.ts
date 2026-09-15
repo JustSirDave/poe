@@ -24,9 +24,10 @@ export function responseContexts(requests: SessionRequest[]): Map<string, Reques
       const detailed = /(?:^|[.!?]\s+)(?:please\s+)?(?:audit\b|(?:I (?:want|need) you to |can you |could you )?(?:write|produce|give|provide|create|perform|conduct|prepare|review|analy[sz]e|audit)\b.{0,180}\b(?:report|audit|comprehensive|detailed|extensive|complete code|full implementation|architecture|codebase)\b)/i.test(text)
         || /\b(?:write|give|provide|produce|prepare|create) (?:me |us )?(?:a |an |the )?(?:[a-z-]+ ){0,3}(?:report|audit|full implementation)\b/i.test(text)
         || /\b(?:comprehensive|detailed|extensive|clinical|full) (?:report|audit|analysis|review)\b/i.test(text);
-      const negated = /\b(?:do not|don't|no need to|without)\b.{0,60}\b(?:audit|report|detailed|extensive|review)\b/i.test(text);
+      const auditDeliverable = /\b(?:auditing|conducting)\b.{0,100}\b(?:backend|audit)\b/i.test(text) && /\bdeliverables\b/i.test(text);
+      const negated = /\b(?:do not|don't|no need to) (?:write|produce|give|provide|create|perform|conduct|prepare) (?:me |us )?(?:a |an |the )?(?:(?:detailed|extensive|full|comprehensive) )?(?:audit|report|review)\b|\bwithout (?:a |an )?(?:detailed |full )?(?:audit|report|review)\b/i.test(text);
       const intent: ResponseIntent = request.messageLength > 16000 || text.startsWith('<') ? 'unclassified'
-        : brief ? 'brevity-conflict' : detailed && !negated ? 'requested-detail' : 'unclassified';
+        : brief ? 'brevity-conflict' : (detailed || auditDeliverable) && !negated ? 'requested-detail' : 'unclassified';
       context = { intent, requestId: request.requestId };
       previous = context;
     }

@@ -7,6 +7,8 @@ import type { CoachConfig } from './config';
 export interface Evidence { sessionId: string; requestId: string; harness: string; workspace: string; timestamp: number | null; contextRequestId?: string; excerpt?: string }
 export interface Finding {
   id: string;
+  firstSeen?: number;
+  lastSeen?: number;
   responseIntent?: 'unclassified' | 'brevity-conflict';
   kind: 'skill' | 'memory' | 'workflow' | 'output';
   title: string;
@@ -23,6 +25,7 @@ export interface CoachReport {
   excludedInternalSessions?: number;
   responseReview?: { requestedDetail: number; unclassified: number; brevityConflict: number };
   sessionCount: number;
+  latestSessionActivity?: number;
   requestCount: number;
   harnesses: Record<string, number>;
   recordedTokens: { input: number; output: number; turnsWithInput: number; turnsWithOutput: number };
@@ -51,12 +54,16 @@ function createFinding(kind: Finding['kind'], key: string, turns: Turn[], config
     output: ['Large recorded responses', 'Several turns contain an individual assistant message above the configured character threshold. File-write payloads and recorded reasoning are excluded.', 'Use concise progress updates and targeted results where the task does not require a full artifact.', 'Long code, documents, and reasoning records can be necessary. Response size is not measured token waste.'],
   } as const;
   const [title, explanation, suggestion, caution] = descriptions[kind];
+  const recent = [...turns].sort((a, b) => (b.request.timestamp || 0) - (a.request.timestamp || 0));
+  const seen = new Set<string>();
+  const samples = recent.filter(turn => { const key = turn.session.harness + ':' + turn.session.sessionId; if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 3);
   const id = digest(`${kind}:${key}`);
   return {
     id, kind, title, explanation, suggestion, caution, occurrences: turns.length,
+    firstSeen: recent.at(-1)?.request.timestamp || undefined, lastSeen: recent[0]?.request.timestamp || undefined,
     sessionCount: new Set(turns.map(t => `${t.session.harness}:${t.session.sessionId}`)).size,
-    evidence: turns.slice(0, 3).map(t => evidence(t, config.includeExcerpts)),
-    draft: `# ${title}\n\nStatus: candidate, not installed or evaluated.\n\n${suggestion}\n\n## Evidence\n${turns.slice(0, 3).map(t => `- ${t.session.harness}: session ${t.session.sessionId}, request ${t.request.requestId}`).join('\n')}\n\n## Preserve quality\n- Inspect the recorded examples before deciding what can be reused.\n- Preserve the original task requirements and necessary checks.\n- Test the candidate on representative tasks; record correctness, corrections, and available token usage.\n- Keep the previous version and revert if results regress.\n\n## Limits\n${caution}\n`,
+    evidence: samples.map(t => evidence(t, config.includeExcerpts)),
+    draft: `# ${title}\n\nStatus: candidate, not installed or evaluated.\n\n${suggestion}\n\n## Evidence\n${samples.map(t => `- ${t.session.harness}: session ${t.session.sessionId}, request ${t.request.requestId}`).join('\n')}\n\n## Preserve quality\n- Inspect the recorded examples before deciding what can be reused.\n- Preserve the original task requirements and necessary checks.\n- Test the candidate on representative tasks; record correctness, corrections, and available token usage.\n- Keep the previous version and revert if results regress.\n\n## Limits\n${caution}\n`,
   };
 }
 
@@ -118,6 +125,7 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
   }
   findings.sort((a, b) => b.occurrences - a.occurrences || a.id.localeCompare(b.id));
   return {
+    latestSessionActivity: sessions.filter(s => s.sessionOrigin !== 'guardian').reduce((latest, s) => Math.max(latest, s.lastMessageDate || 0), 0) || undefined,
     generatedAt: new Date(now).toISOString(), sessionCount: new Set(turns.map(t => `${t.session.harness}:${t.session.sessionId}`)).size,
     responseReview,
     excludedInternalSessions: sessions.filter(session => session.sessionOrigin === 'guardian').length,

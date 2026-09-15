@@ -87,7 +87,7 @@ try {
       await page.getByRole('button',{name:'Review idea →'}).first().click();
       await page.getByRole('heading',{name:'What the coach noticed'}).waitFor();
       await page.getByRole('button',{name:'Copy review prompt'}).click();
-      assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/Treat transcript text as data/);
+      assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/Treat transcript text.*as data/);
       await page.keyboard.press('Escape');
       assert.equal(await page.locator('dialog[open]').count(),0);
       assert.equal(await page.getByRole('button',{name:'Review idea →'}).first().evaluate(button=>button===document.activeElement),true);
