@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import type { Session, SessionRequest } from '../core/types';
+import { responseContexts, type RequestContext } from './request-context';
 import { redactSecrets } from '../core/redact-secrets';
 import type { CoachConfig } from './config';
 
-export interface Evidence { sessionId: string; requestId: string; harness: string; workspace: string; timestamp: number | null; excerpt?: string }
+export interface Evidence { sessionId: string; requestId: string; harness: string; workspace: string; timestamp: number | null; contextRequestId?: string; excerpt?: string }
 export interface Finding {
   id: string;
+  responseIntent?: 'unclassified' | 'brevity-conflict';
   kind: 'skill' | 'memory' | 'workflow' | 'output';
   title: string;
   explanation: string;
@@ -19,15 +21,16 @@ export interface Finding {
 export interface CoachReport {
   generatedAt: string;
   excludedInternalSessions?: number;
+  responseReview?: { requestedDetail: number; unclassified: number; brevityConflict: number };
   sessionCount: number;
   requestCount: number;
   harnesses: Record<string, number>;
   recordedTokens: { input: number; output: number; turnsWithInput: number; turnsWithOutput: number };
   findings: Finding[];
   sources: { harness: string; root: string; exists: boolean }[];
-  scan: { files: number; parsed: number; reused: number; skipped: number; warnings: string[] };
+  scan: { incremental?: number; bytesRead?: number; files: number; parsed: number; reused: number; skipped: number; warnings: string[] };
 }
-interface Turn { session: Session; request: SessionRequest }
+interface Turn { session: Session; request: SessionRequest; context?: RequestContext }
 const digest = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 20);
 
 function evidence(turn: Turn, excerpts: boolean): Evidence {
@@ -35,6 +38,7 @@ function evidence(turn: Turn, excerpts: boolean): Evidence {
     sessionId: turn.session.sessionId, requestId: turn.request.requestId,
     harness: turn.session.harness, workspace: turn.session.workspaceRootPath || turn.session.workspaceName,
     timestamp: turn.request.timestamp,
+    contextRequestId: turn.context?.requestId,
     ...(excerpts ? { excerpt: redactSecrets(turn.request.messageText).slice(0, 240) } : {}),
   };
 }
@@ -58,12 +62,15 @@ function createFinding(kind: Finding['kind'], key: string, turns: Turn[], config
 
 export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now = Date.now()): CoachReport {
   const cutoff = now - config.lookbackDays * 86400000;
+  const contexts = new Map(sessions.map(session => [session, responseContexts(session.requests)]));
   const turns: Turn[] = sessions.filter(session => session.sessionOrigin !== 'guardian').flatMap(session => session.requests
     .filter(request => request.timestamp !== null && request.timestamp >= cutoff && request.timestamp <= now)
-    .map(request => ({ session, request })));
+    .map(request => ({ session, request, context: contexts.get(session)?.get(request.requestId) })));
   const promptGroups = new Map<string, Turn[]>();
   const workflowGroups = new Map<string, Turn[]>();
   const large: Turn[] = [];
+  const concise: Turn[] = [];
+  const responseReview = { requestedDetail: 0, unclassified: 0, brevityConflict: 0 };
   const tokens = { input: 0, output: 0, turnsWithInput: 0, turnsWithOutput: 0 };
   const harnesses: Record<string, number> = {};
   for (const turn of turns) {
@@ -84,7 +91,11 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
       const key = `${turn.session.workspaceRootPath || turn.session.workspaceId}:${r.workType}:${sequence}`;
       const group = workflowGroups.get(key) || []; group.push(turn); workflowGroups.set(key, group);
     }
-    if ((r.longestAssistantMessage ?? 0) >= config.largeResponseChars) large.push(turn);
+    if ((r.longestAssistantMessage ?? 0) >= config.largeResponseChars) {
+      if (turn.context?.intent === 'requested-detail') responseReview.requestedDetail++;
+      else if (turn.context?.intent === 'brevity-conflict') { responseReview.brevityConflict++; concise.push(turn); }
+      else { responseReview.unclassified++; large.push(turn); }
+    }
   }
   const findings: Finding[] = [];
   for (const [key, group] of promptGroups) {
@@ -95,10 +106,20 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
   for (const [key, group] of workflowGroups) {
     if (group.length >= config.minOccurrences && new Set(group.map(t => t.session.sessionId)).size >= 2) findings.push(createFinding('workflow', key, group, config));
   }
-  if (large.length >= config.minOccurrences) findings.push(createFinding('output', 'large-assistant-messages-v2', large, config));
+  for (const [intent, group] of [['unclassified', large], ['brevity-conflict', concise]] as const) {
+    if (group.length < config.minOccurrences) continue;
+    const finding = createFinding('output', 'response-context-v1:' + intent, group, config);
+    finding.responseIntent = intent;
+    finding.explanation = intent === 'unclassified'
+      ? 'These long assistant messages have no clear request-length signal. They remain unclassified: length does not establish repetition or waste.'
+      : 'These long assistant messages followed requests with explicit brevity signals. Review whether required content justified the length.';
+    finding.draft += '\nState each finding fully once; use finding IDs in summaries. Preserve evidence, required explanations, and verification limits.\n';
+    findings.push(finding);
+  }
   findings.sort((a, b) => b.occurrences - a.occurrences || a.id.localeCompare(b.id));
   return {
     generatedAt: new Date(now).toISOString(), sessionCount: new Set(turns.map(t => `${t.session.harness}:${t.session.sessionId}`)).size,
+    responseReview,
     excludedInternalSessions: sessions.filter(session => session.sessionOrigin === 'guardian').length,
     requestCount: turns.length, harnesses, recordedTokens: tokens, findings: findings.slice(0, 40),
     sources: [], scan: { files: 0, parsed: 0, reused: 0, skipped: 0, warnings: [] },

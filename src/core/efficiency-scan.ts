@@ -2,12 +2,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { analyzeEfficiency, type CoachReport } from '../standalone/analysis';
 import { coachConfigSchema, type CoachConfig } from '../standalone/config';
-import { parseClaudeSessionFile } from './parser-claude';
-import { parseCodexSessionFile } from './parser-codex';
+import { createClaudeAccumulator } from './parser-claude';
+import { createCodexAccumulator } from './parser-codex';
+import { assertTrustedPath } from './parser-shared';
+import { IncrementalLog } from './incremental-log';
 import type { Session } from './types';
 
 interface FileEntry { file: string; root: string; harness: 'claude' | 'codex'; fingerprint: string; modified: number; size: number }
-const cache = new Map<string, { fingerprint: string; session: Session | null }>();
+const cache = new Map<string, { fingerprint: string; session: Session | null; reader: IncrementalLog }>();
 
 function inside(file: string, root: string): boolean {
   const relative = path.relative(root, file);
@@ -59,24 +61,24 @@ export function scanEfficiency(input: unknown): CoachReport {
   for (const key of cache.keys()) if (!retained.has(key)) cache.delete(key);
   const sessions: Session[] = [];
   const sessionKeys = new Set<string>();
-  let parsed = 0; let reused = 0; let skipped = files.length - selected.length;
+  let parsed = 0; let reused = 0; let incremental = 0; let bytesRead = 0; let skipped = files.length - selected.length;
   for (const entry of selected) {
     if (entry.size > config.maxFileMB * 1024 * 1024) { skipped++; cache.delete(entry.file); continue; }
     let item = cache.get(entry.file);
     if (item?.fingerprint === entry.fingerprint) reused++;
     else {
       try {
-        // Individual parsers read only the log file: no project discovery or document scans.
-        const session = entry.harness === 'codex'
-          ? parseCodexSessionFile(entry.file, undefined, [entry.root])
-          : parseClaudeSessionFile(entry.file, path.dirname(entry.file), path.basename(path.dirname(entry.file)), undefined, [entry.root]);
-        if (session) {
-          // Preserve response lengths and usage, not large response bodies in the cache.
-          for (const request of session.requests) request.responseText = '';
-        }
-        item = { fingerprint: entry.fingerprint, session };
+        // A cursor retains parser state; only new records enter the parser on normal appends.
+        const reader = item?.reader || new IncrementalLog(() => entry.harness === 'codex'
+          ? createCodexAccumulator(entry.file)
+          : createClaudeAccumulator(entry.file, path.dirname(entry.file), path.basename(path.dirname(entry.file))));
+        assertTrustedPath(entry.file, [entry.root]);
+        const result = reader.read(entry.file);
+        bytesRead += result.bytesRead;
+        if (result.incremental) incremental++;
+        item = { fingerprint: entry.fingerprint, session: result.session, reader };
         cache.set(entry.file, item); parsed++;
-      } catch { skipped++; if (warnings.length < 20) warnings.push(`Could not parse ${entry.file}`); continue; }
+      } catch { cache.delete(entry.file); skipped++; if (warnings.length < 20) warnings.push(`Could not parse ${entry.file}`); continue; }
     }
     if (!item.session) { skipped++; continue; }
     const session = item.session;
@@ -87,6 +89,6 @@ export function scanEfficiency(input: unknown): CoachReport {
   }
   const report = analyzeEfficiency(sessions, config);
   report.sources = sources;
-  report.scan = { files: files.length, parsed, reused, skipped, warnings };
+  report.scan = { files: files.length, parsed, reused, skipped, warnings, incremental, bytesRead };
   return report;
 }

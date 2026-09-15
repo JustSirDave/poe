@@ -1,3 +1,4 @@
+import { ReviewStore } from './reviews';
 import { z } from 'zod';
 import { redactSecrets } from '../core/redact-secrets';
 import type { CoachService } from './service';
@@ -11,6 +12,7 @@ const tools = [
 
 export function createMcpHandler(service: CoachService): (input: unknown) => Promise<unknown> {
   let initialized = false;
+  const reviews = new ReviewStore(service.config.stateDir);
   return async input => {
     const parsed = requestSchema.safeParse(input);
     if (!parsed.success) return { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request' } };
@@ -35,10 +37,13 @@ export function createMcpHandler(service: CoachService): (input: unknown) => Pro
       if (params.name === 'coach_summary') z.object({}).strict().parse(args);
       const stale = !service.report || Date.now() - Date.parse(service.report.generatedAt) > service.config.refreshSeconds * 1000;
       const report = stale ? await service.refresh() : service.report!;
+      await reviews.load();
+      const states = new Map(reviews.history().map(event => [event.id, event.action]));
+      const active = report.findings.filter(finding => states.get(finding.id) !== 'dismissed');
       let data: unknown;
-      if (params.name === 'coach_summary') data = { generatedAt: report.generatedAt, sessions: report.sessionCount, turns: report.requestCount, recordedTokens: report.recordedTokens, candidateCount: report.findings.length, scan: report.scan, limitation: 'Token fields may be partial and are not savings or billing. No internal context visibility or task-quality measurement.' };
-      else if (params.name === 'coach_findings') data = report.findings.slice(0, limit).map(({ draft: _draft, ...finding }) => finding);
-      else { const finding = report.findings.find(f => f.id === proposalId); if (!finding) throw new Error('Finding not found'); data = finding; }
+      if (params.name === 'coach_summary') data = { generatedAt: report.generatedAt, sessions: report.sessionCount, turns: report.requestCount, recordedTokens: report.recordedTokens, candidateCount: active.length, responseReview: report.responseReview, scan: report.scan, limitation: 'Token fields may be partial and are not savings or billing. No internal context visibility or task-quality measurement.' };
+      else if (params.name === 'coach_findings') data = active.slice(0, limit).map(({ draft: _draft, ...finding }) => finding);
+      else { const finding = active.find(f => f.id === proposalId); if (!finding) throw new Error('Finding not found'); data = finding; }
       return response({ content: [{ type: 'text', text: redactSecrets(JSON.stringify(data)) }] });
     } catch (failure) {
       return response({ isError: true, content: [{ type: 'text', text: failure instanceof z.ZodError ? 'Invalid tool arguments' : failure instanceof Error ? failure.message : 'Tool failed' }] });

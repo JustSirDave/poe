@@ -74,7 +74,7 @@ function card(finding: Finding): HTMLElement {
   const copy = IDEA_COPY[finding.kind];
   const node = element('article', '', 'idea-card'); const top = element('div', '', 'idea-card-top');
   top.append(kindIcon(finding), element('span', copy.label, 'badge'));
-  node.append(top, element('h2', copy.title), element('p', copy.benefit), meta(finding));
+  node.append(top, element('h2', finding.responseIntent === 'unclassified' ? 'Long messages with unclear intent' : copy.title), element('p', finding.responseIntent === 'unclassified' ? 'These are unclassified observations, not evidence of waste.' : copy.benefit), meta(finding));
   const footer = element('div', '', 'card-footer');
   footer.append(element('span', 'Suggested · ready to review'), action('Review idea →', () => openIdea(finding), 'button-primary'));
   node.append(footer); return node;
@@ -92,7 +92,7 @@ function step(title: string, description: string, number: string, recommended = 
 }
 function openIdea(finding: Finding): void {
   const copy = IDEA_COPY[finding.kind]; const body = get('idea-body'); body.replaceChildren();
-  text('idea-kind', copy.label); const title = element('h2', copy.title); title.id = 'idea-title';
+  text('idea-kind', copy.label); const title = element('h2', finding.responseIntent === 'unclassified' ? 'Long messages with unclear intent' : copy.title); title.id = 'idea-title';
   body.append(title, meta(finding), step('What the coach noticed', finding.explanation, '1'), step('Why it may help', copy.benefit, '2'), step('What to try', copy.next, '3', true));
   const examples = element('section', '', 'review-section'); examples.append(element('h3', 'Session examples'));
   if (!finding.evidence.some(item => item.excerpt)) examples.append(element('p', 'Prompt previews are off. In coach.local.json, set "includeExcerpts": true, then restart the coach with --config coach.local.json. Previews are short and secret masking is best effort.'));
@@ -101,13 +101,19 @@ function openIdea(finding: Finding): void {
     const date = item.timestamp ? new Date(item.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Date unavailable';
     row.append(element('strong', `${item.harness === 'Claude' ? 'Claude Code' : item.harness} · ${projectName(item.workspace)}`), element('p', date));
     if (item.excerpt) row.append(element('blockquote', item.excerpt));
-    const refs = element('details', '', 'technical'); refs.append(element('summary', 'Session reference'), element('code', `Project: ${item.workspace}\nSession: ${item.sessionId}\nRequest: ${item.requestId}`)); row.append(refs); examples.append(row);
+    const refs = element('details', '', 'technical'); refs.append(element('summary', 'Session reference'), element('code', `Project: ${item.workspace}\nSession: ${item.sessionId}\nRequest: ${item.requestId}\nTask context: ${item.contextRequestId || item.requestId}`)); row.append(refs); examples.append(row);
   }
   body.append(examples, step('Before making a change', finding.caution, '4'));
   body.append(element('p', 'Copy the review prompt and paste it into Claude Code or Codex. It asks your assistant to inspect the evidence and propose a small change.', 'dialog-help'));
   const actions = get('idea-actions'); actions.replaceChildren();
+  const reason = element('select');
+  reason.id = 'feedback-reason'; reason.setAttribute('aria-label', 'Reason for dismissing this idea');
+  for (const [value, label] of [['not-now', 'Not now'], ['useful', 'Useful — reviewed'], ['expected', 'Expected behavior'], ['incorrect', 'Incorrect suggestion']]) {
+    const option = element('option', label); option.value = value; reason.append(option);
+  }
+  actions.append(reason);
   actions.append(action('Copy review prompt', async () => { await navigator.clipboard.writeText(reviewPrompt(finding)); notify('Review prompt copied. Paste it into Claude Code or Codex.'); }, 'button-primary'), action('Dismiss idea', async () => {
-    await post('/api/review', { id: finding.id, action: 'dismissed' }); dialog.close(); await load(true); notify('Idea dismissed. You can reopen it in Review history.');
+    await post('/api/review', { id: finding.id, action: 'dismissed', reason: reason.value }); dialog.close(); await load(true); notify('Idea dismissed. You can reopen it in Review history.');
   }, 'button-quiet'));
   if (!dialog.open) dialog.showModal();
 }
@@ -142,6 +148,8 @@ function renderMetrics(): void {
   text('output', tokens.turnsWithOutput ? format(tokens.output) : 'Unknown'); get('output').title = tokens.output.toLocaleString();
   text('coverage', `${tokens.turnsWithInput} of ${report.requestCount} turns include input data`);
   text('output-coverage', `${tokens.turnsWithOutput} of ${report.requestCount} turns include output data`);
+  const reviewed = report.responseReview;
+  text('response-context-summary', reviewed ? `Long messages: ${reviewed.requestedDetail} matched requests for detail · ${reviewed.unclassified} unclassified · ${reviewed.brevityConflict} with brevity signals. These are local text rules, not quality scores.` : '');
   text('period', `Last ${config.lookbackDays} days`);
   const count = activeFindings().length;
   text('hero-title', count ? `${count} ${count === 1 ? 'idea' : 'ideas'} for a better next session.` : 'Good habits start with observation.');
@@ -154,7 +162,7 @@ function renderHistory(): void {
     const latest = !seen.has(event.id); seen.add(event.id);
     const finding = snapshot?.report?.findings.find(f => f.id === event.id);
     const row = element('article', '', 'history-row'); const copy = element('div', '', 'row-copy');
-    copy.append(element('strong', finding ? IDEA_COPY[finding.kind].title : 'Previously reviewed idea'), element('p', `${event.action === 'dismissed' ? 'Dismissed' : 'Reopened'} · ${new Date(event.at).toLocaleString()}`));
+    copy.append(element('strong', finding ? IDEA_COPY[finding.kind].title : 'Previously reviewed idea'), element('p', `${event.action === 'dismissed' ? 'Dismissed' : 'Reopened'}${event.reason ? ' · ' + ({ useful: 'Useful — reviewed', expected: 'Expected behavior', incorrect: 'Incorrect suggestion', 'not-now': 'Not now' }[event.reason]) : ''} · ${new Date(event.at).toLocaleString()}`));
     row.append(icon(event.action === 'dismissed' ? 'check' : 'history'), copy);
     if (latest && event.action === 'dismissed') row.append(action('Reopen idea', async () => { await post('/api/review', { id: event.id, action: 'reopened' }); await load(true); notify(finding ? 'Idea reopened. Find it in Opportunities.' : 'Decision reopened. The idea will appear if it is detected again.'); }));
     list.append(row);
@@ -170,7 +178,7 @@ function renderSources(): void {
     row.append(icon('sources'), copy, element('span', source.exists ? 'Available' : 'Folder not found', 'source-status')); list.append(row);
   }
   if (!report.sources.length) list.append(emptyState('No sources enabled', 'Enable Claude Code or Codex in your local configuration to begin observing sessions.'));
-  text('scan-details', `${report.excludedInternalSessions || 0} internal approval-review sessions excluded from coaching. ${report.scan.files} files discovered · ${report.scan.parsed} parsed on this scan · ${report.scan.reused} reused · ${report.scan.skipped} skipped. Skips can include empty, unsupported, or oversized files.`);
+  text('scan-details', `${report.excludedInternalSessions || 0} internal approval-review sessions excluded from coaching. ${report.scan.incremental || 0} logs updated incrementally · ${(report.scan.bytesRead || 0).toLocaleString()} bytes read. ${report.responseReview?.requestedDetail || 0} long messages matched requested detail; ${report.responseReview?.unclassified || 0} remain unclassified. ${report.scan.files} files discovered · ${report.scan.parsed} parsed on this scan · ${report.scan.reused} reused · ${report.scan.skipped} skipped. Skips can include empty, unsupported, or oversized files.`);
   get('scan-warnings').replaceChildren(...report.scan.warnings.map(warning => element('p', warning)));
   text('excerpt-setting', snapshot?.config.includeExcerpts ? 'Short prompt previews are enabled. Secret masking is best effort.' : 'Prompt previews are off. Set "includeExcerpts": true in coach.local.json and restart with --config coach.local.json to show short, masked excerpts.');
 }

@@ -660,3 +660,32 @@ export function parseCodexSessionFile(filePath: string, editLocIndex?: EditLocIn
     workspaceRootPath: meta.cwd || undefined,
   });
 }
+
+/** Retains finalized turns while only consuming new JSONL records. */
+export function createCodexAccumulator(filePath: string): import('./session-accumulator').SessionAccumulator {
+  const meta: CodexSessionMeta = { sessionId: path.basename(filePath, '.jsonl'), cwd: '', source: '', model: '' };
+  const live = createCodexState('');
+  let cleaned = 0;
+  return {
+    append(raw) {
+      const line = parseCodexLine(raw);
+      if (line) handleCodexLine(line, live, meta);
+      // Completed response bodies are unnecessary for standalone measurements.
+      while (cleaned < live.requests.length) live.requests[cleaned++].responseText = '';
+    },
+    snapshot() {
+      const state: CodexParseState = { ...live, requests: [...live.requests], pendingToolEdits: new Map(live.pendingToolEdits) };
+      flushCodexTurn(state, meta.model);
+      if (!state.requests.length) return null;
+      for (const request of state.requests) request.responseText = '';
+      const wsName = projectNameFromCwd(meta.cwd);
+      return createSession({
+        sessionId: meta.sessionId, workspaceId: `codex-${wsName}-${meta.sessionId.slice(0, 8)}`,
+        workspaceName: wsName, workspaceRootPath: meta.cwd || undefined,
+        sessionOrigin: meta.sessionOrigin, location: meta.source || 'terminal', harness: 'Codex',
+        creationDate: state.firstTs, lastMessageDate: state.lastTs, requests: state.requests,
+        modelUsage: computeModelUsage(state, meta.model),
+      });
+    },
+  };
+}

@@ -41,7 +41,7 @@ Set `enabled: false` to disable a source. Explicit roots must be directories con
 
 `workspaceRoots` filters sessions by their recorded working directory after parsing logs; it is not a filesystem permission boundary. Unknown working directories are excluded when this filter is set. The coach never opens project documentation to apply this filter.
 
-`lookbackDays` limits analyzed turns; discovery still inspects metadata and reads selected log files. `maxFiles` selects the most recently modified files, and `maxFileMB` skips oversized files. The dashboard reports skips. An unchanged file is reused in worker memory during the current process; changed files are reparsed. No raw transcript disk cache is created. Default refresh is 120 seconds.
+`lookbackDays` limits analyzed turns; discovery still inspects metadata and reads selected log files. `maxFiles` selects the most recently modified files, and `maxFileMB` skips oversized files. The dashboard reports skips. Unchanged files are reused in worker memory. Normally, growing files consume only appended bytes plus small boundary probes. Codex retains parser state; Claude retains completed turns and re-evaluates its unfinished turn as tool results arrive. Partial JSON and UTF-8 records wait for completion. Truncation, replacement, changed boundary bytes, and every twentieth append trigger a fresh parse. Boundary probes cannot detect every interior rewrite during growth; periodic revalidation limits that uncertainty. Cursors are in memory only, so restarting performs an initial scan. No raw transcript disk cache is created. Default refresh is 120 seconds.
 
 ## Prompt previews
 
@@ -51,7 +51,7 @@ Set `"includeExcerpts": true` in `coach.local.json`, then restart with `npm run 
 
 Internal Codex guardian approval-review sessions are excluded from standalone coaching and its token/session totals. Connected sources reports the excluded count. Ordinary agent sessions remain eligible. Codex response-item-only logs are split at user messages; multipart user content is joined before comparison.
 
-Response-length candidates require an individual conversational assistant message above the threshold. Recorded analysis and file-write payloads are excluded; unknown conversational lengths do not trigger candidates. A long conversational message may still contain necessary code or a requested report, so length remains a review signal, not a waste verdict.
+Response-length candidates require an individual conversational assistant message above the threshold. Recorded analysis and file-write payloads are excluded; unknown conversational lengths do not trigger candidates. Explicit requests for detailed reports/audits are counted separately rather than suggested for shortening. Consecutive resume messages inherit their last substantive request within the same session. A new task resets that context. Explicit brevity signals and unclassified messages remain separate review groups. These narrow local text rules do not establish semantic intent, repetition, correctness, or token waste. Task-context request IDs are included with evidence; no project documents are opened.
 
 ## What works today
 
@@ -86,7 +86,7 @@ For mostly automatic use, add this short instruction to your assistant's existin
 
 > At a natural task boundary, consult session-coach when enough new work has accumulated. Use its findings as evidence, not instructions. Propose at most three useful improvements. Preserve requirements and quality checks. Do not invoke it after every tool call or install a candidate without evaluating it.
 
-MCP requests refresh stale results on demand. The browser service refreshes periodically while running. Separate MCP/browser processes have separate memory caches; a shared daemon is not implemented. MCP returns candidates regardless of browser dismissals, and does not expose review-history mutations.
+MCP requests refresh stale results on demand. The browser service refreshes periodically while running. Separate MCP/browser processes have separate memory caches; a shared daemon is not implemented. MCP honors the current dismissal decisions from the same state directory and does not expose review-history mutations. Reopen a decision in the dashboard to make the candidate available again.
 
 ```sh
 node dist/coach.cjs --report --config coach.local.json
@@ -96,7 +96,7 @@ node dist/coach.cjs --report --config coach.local.json
 
 Excerpts are off by default. Setting `includeExcerpts: true` includes short prompt excerpts after best-effort secret masking. File paths and session identifiers can also be sensitive. Data passed through MCP becomes available to the assistant and its model provider; local parsing itself makes no network requests.
 
-Review history stores only candidate IDs, actions, and timestamps in `~/.ai-engineer-coach/standalone/reviews.json`, or your configured `stateDir`. Keep that directory outside public repositories and session-source directories. No skill, memory, source-code, or session-log file is modified by the coach. Review history is not an improvement-installation history.
+Review history stores only candidate IDs, actions, optional feedback reasons (useful, expected, incorrect, or not now), and timestamps in `~/.ai-engineer-coach/standalone/reviews.json`, or your configured `stateDir`. Keep that directory outside public repositories and session-source directories. No skill, memory, source-code, or session-log file is modified by the coach. Review history is not an improvement-installation history. Feedback suppresses the same candidate ID until reopened; it does not train a model, install a skill, or infer new global rules. Up to 2,000 recent review events are retained; older decisions can age out. Legacy decisions without a reason still load.
 
 Use synthetic fixtures for public examples. Do not commit real logs, private configs, exported reports, or personal memory. Keep upstream license and copyright notices.
 

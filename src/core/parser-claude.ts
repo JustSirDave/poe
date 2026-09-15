@@ -767,3 +767,45 @@ export function parseClaudeSessionFile(
     entrypoint,
   });
 }
+
+/** Re-evaluates only the unfinished Claude turn as tool results arrive. */
+export function createClaudeAccumulator(filePath: string, wsId: string, wsName: string): import('./session-accumulator').SessionAccumulator {
+  let sessionId = path.basename(filePath, '.jsonl');
+  let firstLine = true;
+  let pending: ClaudeLine[] = [];
+  const completed: SessionRequest[] = [];
+  let cwd = '';
+  let entrypoint: string | undefined;
+  function current(): SessionRequest | undefined {
+    if (!pending.length) return undefined;
+    const user = pending[0];
+    const data = collectClaudeAssistantData(pending, 1, getTimestamp(user.timestamp));
+    const request = buildClaudeRequest(user, data, getTimestamp(user.timestamp), completed.length, sessionId);
+    request.responseText = '';
+    return request;
+  }
+  return {
+    append(raw) {
+      const line = parseClaudeLine(raw);
+      if (!line) return;
+      if (firstLine) { sessionId = line.sessionId || sessionId; firstLine = false; }
+      if (line.type === 'user' && userHasText(line)) {
+        const previous = current();
+        if (previous) completed.push(previous);
+        pending = [];
+        if (!cwd && line.cwd) cwd = line.cwd;
+        if (!entrypoint && line.entrypoint) entrypoint = line.entrypoint;
+      }
+      if (pending.length || (line.type === 'user' && userHasText(line))) pending.push(line);
+    },
+    snapshot() {
+      const tail = current();
+      const requests = tail ? [...completed, tail] : [...completed];
+      if (!requests.length) return null;
+      return createSession({
+        sessionId, workspaceId: wsId, workspaceName: wsName, workspaceRootPath: cwd || undefined,
+        location: 'terminal', harness: 'Claude', requests, launcherKind: classifyLauncher(entrypoint), entrypoint,
+      });
+    },
+  };
+}

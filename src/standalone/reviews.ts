@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { z } from 'zod';
 
-const eventSchema = z.object({ id: z.string().regex(/^[a-f0-9]{20}$/), action: z.enum(['dismissed', 'reopened']), at: z.string() });
+const eventSchema = z.object({ id: z.string().regex(/^[a-f0-9]{20}$/), action: z.enum(['dismissed', 'reopened']), reason: z.enum(['useful', 'expected', 'incorrect', 'not-now']).optional(), at: z.string() });
 const historySchema = z.array(eventSchema).max(2000);
 export type ReviewEvent = z.infer<typeof eventSchema>;
 

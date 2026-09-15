@@ -92,9 +92,11 @@ try {
       assert.equal(await page.locator('dialog[open]').count(),0);
       assert.equal(await page.getByRole('button',{name:'Review idea →'}).first().evaluate(button=>button===document.activeElement),true);
       await page.getByRole('button',{name:'Review idea →'}).first().click();
+      await page.getByLabel('Reason for dismissing this idea').selectOption('expected');
       await page.getByRole('button',{name:'Dismiss idea'}).click();
       await page.getByRole('heading',{name:/No ideas in this category|Nothing needs a closer look yet/}).waitFor();
       await page.getByRole('link',{name:'Review history',exact:true}).click();
+      assert((await reportAt(url)).history.some(event=>event.reason==='expected'));
       await page.getByRole('button',{name:'Reopen idea'}).first().click();
       await page.getByRole('link',{name:/^Opportunities/}).click();
       await page.getByRole('heading',{name:'Make a skill for a repeated instruction',exact:true}).waitFor();

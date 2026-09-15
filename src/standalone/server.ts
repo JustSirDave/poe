@@ -43,7 +43,7 @@ export async function startDashboard(service: CoachService): Promise<{ url: stri
       void service.refresh().catch(() => {}); respond(res, 202, { ok: true }); return;
     }
     if (req.method === 'POST' && req.headers['content-type'] === 'application/json' && route === '/api/review') {
-      const input = z.object({ id: z.string().regex(/^[a-f0-9]{20}$/), action: z.enum(['dismissed', 'reopened']) }).strict().parse(await readBody(req));
+      const input = z.object({ id: z.string().regex(/^[a-f0-9]{20}$/), action: z.enum(['dismissed', 'reopened']), reason: z.enum(['useful', 'expected', 'incorrect', 'not-now']).optional() }).strict().parse(await readBody(req));
       if (!service.report?.findings.some(f => f.id === input.id) && !reviews.history().some(e => e.id === input.id)) { respond(res, 404, { error: 'Unknown finding' }); return; }
       await reviews.record({ ...input, at: new Date().toISOString() }); respond(res, 200, { ok: true }); return;
     }
