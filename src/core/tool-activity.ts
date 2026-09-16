@@ -34,6 +34,7 @@ function failureCategory(text: string, exitCode: number | undefined, toolName: s
   if (/multiple matches|appears more than once/i.test(text)) return 'edit target is ambiguous';
   if (/not found|no such file|cannot find/i.test(text)) return 'command or file not found';
   if (/test.*fail|failed.*test|assertionerror/i.test(text)) return 'test failure';
+  // cspell:ignore econn
   if (/network|dns|econn|connection/i.test(text)) return 'network failure';
   if (/syntax error|parse error/i.test(text)) return 'syntax or parse error';
   if (exitCode !== undefined) return `exit code ${exitCode}`;

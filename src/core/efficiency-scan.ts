@@ -11,6 +11,7 @@ import { assertTrustedPath } from './parser-shared';
 import { observeTools } from './tool-activity';
 import { IncrementalLog } from './incremental-log';
 import type { Session } from './types';
+import { buildAnalysisDataset, type AnalysisDataset } from './analysis-dataset';
 
 type SourceKind = keyof CoachConfig['sources'];
 interface FileEntry { file: string; root: string; source: SourceKind; parser: 'session-log' | 'vscode-chat' | 'copilot-events'; workspaceId?: string; workspaceName?: string; fingerprint: string; modified: number; size: number }
@@ -70,7 +71,12 @@ function discover(config: CoachConfig): { files: FileEntry[]; sources: CoachRepo
   return { files, sources, warnings };
 }
 
-export function scanEfficiency(input: unknown): CoachReport {
+function scanSessions(input: unknown): {
+  config: CoachConfig;
+  sessions: Session[];
+  sources: CoachReport['sources'];
+  scan: CoachReport['scan'];
+} {
   const config = coachConfigSchema.parse(input);
   const { files, sources, warnings } = discover(config);
   const selected = files.slice(0, config.maxFiles);
@@ -113,8 +119,18 @@ export function scanEfficiency(input: unknown): CoachReport {
     if (sessionKeys.has(key)) continue;
     sessionKeys.add(key); sessions.push(session);
   }
+  return { config, sessions, sources, scan: { files: files.length, parsed, reused, skipped, warnings, incremental, bytesRead } };
+}
+
+export function scanEfficiency(input: unknown): CoachReport {
+  const { config, sessions, sources, scan } = scanSessions(input);
   const report = analyzeEfficiency(sessions, config);
   report.sources = sources;
-  report.scan = { files: files.length, parsed, reused, skipped, warnings, incremental, bytesRead };
+  report.scan = scan;
   return report;
+}
+
+export function scanAnalysisDataset(input: unknown): AnalysisDataset {
+  const { config, sessions } = scanSessions(input);
+  return buildAnalysisDataset(sessions, { includePreviews: config.includeExcerpts });
 }

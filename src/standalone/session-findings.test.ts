@@ -71,7 +71,7 @@ describe('within-session signals', () => {
     f.append({ type: 'response_item', timestamp: now, payload: { type: 'reasoning', encrypted_content: 'encrypted-only' } });
     expect(f.parser.snapshot()?.reasoningActivity).toEqual([]);
   });
-  it('does not surface repeated reasoning when no inspectable preview exists', () => {
+  it('does not surface repeated reasoning when no reviewable preview exists', () => {
     const f = fixture('codex', false);
     for (let i = 0; i < 3; i++) f.append({ type: 'event_msg', timestamp: now - 3000 + i * 100, payload: { type: 'agent_reasoning', text: 'Same private reasoning' } });
     expect(f.findings()).toEqual([]);

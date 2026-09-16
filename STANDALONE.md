@@ -97,6 +97,16 @@ MCP requests refresh stale results on demand. The browser service refreshes peri
 node dist/poe.cjs --report --config poe.local.json
 ```
 
+Export the metadata-first evidence dataset for the local analysis engine with:
+
+```sh
+node dist/poe.cjs --analysis-data --config poe.local.json
+```
+
+The export labels source-specific token-counter scopes, includes stable session and event IDs, and
+omits transcript text unless `includeExcerpts` is enabled. The design and evidence limits are
+documented in [Poe reasoning and efficiency analytics](docs/POE_REASONING_ANALYTICS.md).
+
 ## Privacy and public repositories
 
 Excerpts are off by default. Setting `includeExcerpts: true` includes short prompt excerpts after best-effort secret masking. File paths and session identifiers can also be sensitive. Data passed through MCP becomes available to the assistant and its model provider; local parsing itself makes no network requests.
