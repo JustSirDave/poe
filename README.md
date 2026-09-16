@@ -1,6 +1,6 @@
 # Poe
 
-**I am Poe.** A local workflow coach for Claude Code and Codex.
+**I am Poe.** A local workflow coach for Claude Code, Codex, VS Code Copilot, and GitHub Copilot CLI.
 
 Poe observes recorded coding sessions and surfaces reviewable ideas for reusable skills, memory, workflows, and response length. It runs in a browser on your computer, without VS Code. Analysis makes no model calls and does not scan project documents.
 
@@ -20,7 +20,8 @@ Open the loopback URL printed in your terminal. See [the standalone guide](STAND
 
 ## Current capabilities
 
-- Local Claude Code and Codex session parsing with automatic refresh.
+- Local Claude Code, Codex, VS Code Copilot, and GitHub Copilot CLI session parsing with automatic refresh.
+- A current-day analysis on Overview and historical token filters from local midnight through all loaded history.
 - Historical token trends with separate Claude Code and Codex activity, cache-read context, and coverage labels.
 - Evidence-backed candidates and persistent dismiss/reopen decisions.
 - Read-only MCP tools for reviewing findings with your assistant.

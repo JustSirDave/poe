@@ -88,4 +88,6 @@ it('keeps historical usage separate from the five-day coaching window', () => {
   expect(report.usageHistory.byHarness.Claude).toMatchObject({ sessions: 1, turns: 1, input: 400, output: 80, cacheRead: 300, cacheWrite: 20 });
   expect(report.usageHistory.byHarness.Codex).toMatchObject({ sessions: 1, turns: 1, input: 120, output: 30 });
   expect(report.usageHistory.days).toHaveLength(2);
+  const date = new Date(now - 30 * 86400000); const pad = (value: number) => String(value).padStart(2, '0');
+  expect(report.usageHistory.days[0].date).toBe(`${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`);
 });

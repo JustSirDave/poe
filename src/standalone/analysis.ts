@@ -65,6 +65,10 @@ export interface CoachReport {
 }
 interface Turn { session: Session; request: SessionRequest; context?: RequestContext }
 const digest = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 20);
+function localDateKey(timestamp: number): string {
+  const date = new Date(timestamp); const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
 
 function usageHistory(sessions: Session[], now: number): CoachReport['usageHistory'] {
   type MutablePoint = TokenUsagePoint & { sessionIds: Set<string> };
@@ -91,7 +95,7 @@ function usageHistory(sessions: Session[], now: number): CoachReport['usageHisto
       if (request.completionTokens !== null && Number.isFinite(request.completionTokens) && request.completionTokens >= 0) { summary.output += request.completionTokens; summary.turnsWithOutput++; }
       if (request.cacheReadTokens !== null && Number.isFinite(request.cacheReadTokens) && request.cacheReadTokens >= 0) summary.cacheRead += request.cacheReadTokens;
       if (request.cacheWriteTokens !== null && Number.isFinite(request.cacheWriteTokens) && request.cacheWriteTokens >= 0) summary.cacheWrite += request.cacheWriteTokens;
-      const date = new Date(timestamp).toISOString().slice(0, 10);
+      const date = localDateKey(timestamp);
       const key = `${date}:${session.harness}`;
       const point = points.get(key) || { date, harness: session.harness, sessions: 0, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0, sessionIds: new Set<string>() };
       point.turns++; point.sessionIds.add(sessionKey);

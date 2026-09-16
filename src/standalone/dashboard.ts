@@ -136,6 +136,13 @@ function emptyState(title: string, description: string): HTMLElement {
 }
 const compact = (value: number) => Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 const assistantName = (name: string) => name.toLowerCase() === 'claude' ? 'Claude Code' : name;
+const ASSISTANT_ORDER = ['Claude', 'Codex', 'VS Code Copilot', 'GitHub Copilot CLI', 'GitHub Copilot App'];
+const assistantClass = (name: string) => name === 'Claude' ? 'claude' : name === 'Codex' ? 'codex' : name === 'VS Code Copilot' ? 'vscode' : 'copilot';
+const assistantMark = (name: string) => name === 'Claude' ? 'C' : name === 'Codex' ? 'Cdx' : name === 'VS Code Copilot' ? 'VS' : 'GH';
+function localDateKey(timestamp = Date.now()): string {
+  const date = new Date(timestamp); const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
 function activityAge(timestamp?: number): string {
   if (!timestamp) return 'No dated activity';
   const hours = Math.max(0, (Date.now() - timestamp) / 3600000);
@@ -143,11 +150,11 @@ function activityAge(timestamp?: number): string {
 }
 function renderAssistantActivity(): void {
   const list = get('source-glance-list'); list.replaceChildren();
-  const entries = Object.entries(snapshot?.report?.usageHistory.byHarness || {}).sort(([a], [b]) => a === 'Claude' ? -1 : b === 'Claude' ? 1 : a.localeCompare(b));
+  const entries = Object.entries(snapshot?.report?.usageHistory.byHarness || {}).sort(([a], [b]) => (ASSISTANT_ORDER.indexOf(a) + 1 || 99) - (ASSISTANT_ORDER.indexOf(b) + 1 || 99));
   for (const [name, data] of entries) {
-    const card = element('article', '', `assistant-card ${name.toLowerCase()}`);
+    const card = element('article', '', `assistant-card ${assistantClass(name)}`);
     const top = element('div', '', 'assistant-card-top');
-    const identity = element('div'); identity.append(element('span', name === 'Claude' ? 'C' : name.slice(0, 1), 'assistant-mark'), element('strong', assistantName(name)));
+    const identity = element('div'); identity.append(element('span', assistantMark(name), 'assistant-mark'), element('strong', assistantName(name)));
     top.append(identity, element('span', activityAge(data.lastActivity), 'source-status'));
     const recorded = data.input + data.output;
     const cacheDetail = data.cacheRead ? ` · ${compact(data.cacheRead)} cache-read` : '';
@@ -159,8 +166,10 @@ function renderAssistantActivity(): void {
 function usagePoints(): NonNullable<CoachReport['usageHistory']>['days'] {
   const points = snapshot?.report?.usageHistory.days || [];
   if (usageRange === 'all') return points;
-  const cutoff = Date.now() - Number(usageRange) * 86400000;
-  return points.filter(point => Date.parse(`${point.date}T23:59:59Z`) >= cutoff);
+  if (usageRange === 'today') return points.filter(point => point.date === localDateKey());
+  const cutoff = new Date(); cutoff.setHours(0, 0, 0, 0); cutoff.setDate(cutoff.getDate() - Number(usageRange) + 1);
+  const key = localDateKey(cutoff.getTime());
+  return points.filter(point => point.date >= key);
 }
 function svgNode<K extends keyof SVGElementTagNameMap>(name: K, attrs: Record<string, string> = {}): SVGElementTagNameMap[K] {
   const node = document.createElementNS('http://www.w3.org/2000/svg', name);
@@ -168,23 +177,26 @@ function svgNode<K extends keyof SVGElementTagNameMap>(name: K, attrs: Record<st
   return node;
 }
 function renderUsageChart(points: ReturnType<typeof usagePoints>): void {
-  const holder = get('usage-chart'); holder.replaceChildren();
+  const holder = get('usage-chart'); holder.replaceChildren(); get('chart-legend').replaceChildren();
   if (!points.length) { holder.append(emptyState('No token records in this range', 'Try a wider range or check Connected sources.')); return; }
   const dates = [...new Set(points.map(point => point.date))].sort();
-  const start = Date.parse(`${dates[0]}T00:00:00Z`); const end = Math.max(start + 86400000, Date.parse(`${dates.at(-1)}T00:00:00Z`));
+  const start = Date.parse(`${dates[0]}T00:00:00`); const end = Math.max(start + 86400000, Date.parse(`${dates.at(-1)}T00:00:00`));
   const totals = new Map(points.map(point => [`${point.date}:${point.harness}`, point.input + point.output]));
   const max = Math.max(1, ...totals.values()); const width = 920; const height = 286; const left = 62; const right = 18; const top = 20; const bottom = 42;
-  const x = (date: string) => left + (Date.parse(`${date}T00:00:00Z`) - start) / (end - start) * (width - left - right);
+  const x = (date: string) => left + (Date.parse(`${date}T00:00:00`) - start) / (end - start) * (width - left - right);
   const y = (value: number) => top + (1 - value / max) * (height - top - bottom);
-  const svg = svgNode('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': 'Daily recorded token usage for Claude Code and Codex' });
+  const svg = svgNode('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': 'Daily recorded token usage across coding assistants' });
   for (let i = 0; i <= 4; i++) {
     const value = max * (4 - i) / 4; const yy = top + i * (height - top - bottom) / 4;
     svg.append(svgNode('line', { x1: String(left), y1: String(yy), x2: String(width - right), y2: String(yy), class: 'chart-grid' }));
     const label = svgNode('text', { x: String(left - 10), y: String(yy + 4), class: 'chart-axis', 'text-anchor': 'end' }); label.textContent = compact(Math.round(value)); svg.append(label);
   }
   const labelDates = dates.filter((_, index) => index === 0 || index === dates.length - 1 || index % Math.max(1, Math.floor(dates.length / 4)) === 0).slice(0, 6);
-  for (const date of labelDates) { const label = svgNode('text', { x: String(x(date)), y: String(height - 13), class: 'chart-axis', 'text-anchor': 'middle' }); label.textContent = new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); svg.append(label); }
-  for (const [harness, className] of [['Claude', 'claude'], ['Codex', 'codex']] as const) {
+  for (const date of labelDates) { const label = svgNode('text', { x: String(x(date)), y: String(height - 13), class: 'chart-axis', 'text-anchor': 'middle' }); label.textContent = new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); svg.append(label); }
+  const harnesses = [...new Set(points.map(point => point.harness))].sort((a, b) => (ASSISTANT_ORDER.indexOf(a) + 1 || 99) - (ASSISTANT_ORDER.indexOf(b) + 1 || 99));
+  const legend = get('chart-legend'); legend.replaceChildren();
+  for (const harness of harnesses) {
+    const className = assistantClass(harness); const item = element('span', assistantName(harness), className); item.prepend(element('i')); legend.append(item);
     const series = dates.map(date => ({ date, value: totals.get(`${date}:${harness}`) || 0 }));
     const line = svgNode('polyline', { points: series.map(point => `${x(point.date)},${y(point.value)}`).join(' '), class: `usage-line ${className}` }); svg.append(line);
     for (const point of series.filter(point => point.value > 0)) {
@@ -194,6 +206,18 @@ function renderUsageChart(points: ReturnType<typeof usagePoints>): void {
   }
   holder.append(svg);
 }
+function renderOverviewAnalysis(): void {
+  const points = (snapshot?.report?.usageHistory.days || []).filter(point => point.date === localDateKey());
+  const turns = points.reduce((sum, point) => sum + point.turns, 0); const input = points.reduce((sum, point) => sum + point.input, 0); const output = points.reduce((sum, point) => sum + point.output, 0); const cache = points.reduce((sum, point) => sum + point.cacheRead, 0); const total = input + output;
+  const top = points.slice().sort((a, b) => (b.input + b.output) - (a.input + a.output))[0];
+  text('overview-analysis-title', turns ? `${turns.toLocaleString()} turns recorded since midnight.` : 'No session activity recorded today yet.');
+  const share = top && total ? Math.round((top.input + top.output) / total * 100) : 0; const cacheShare = input ? Math.round(cache / input * 100) : 0;
+  text('overview-analysis-copy', total ? `${assistantName(top.harness)} represents ${share}% of today’s recorded processed tokens. ${cacheShare}% of processed input came from cache reads.` : turns ? 'Poe found activity, but today’s logs do not include token fields yet.' : 'Historical sessions remain available below and on Token usage.');
+  const stats = get('overview-analysis-stats'); stats.replaceChildren();
+  for (const [label, value] of [['Processed', total ? compact(total) : 'Unknown'], ['Turns', turns.toLocaleString()], ['Most active', top ? assistantName(top.harness) : '—']]) {
+    const item = element('div'); item.append(element('span', label), element('strong', value)); stats.append(item);
+  }
+}
 function renderUsage(): void {
   if (!snapshot?.report) return;
   const points = usagePoints(); const input = points.reduce((sum, point) => sum + point.input, 0); const output = points.reduce((sum, point) => sum + point.output, 0); const cacheRead = points.reduce((sum, point) => sum + point.cacheRead, 0); const turns = points.reduce((sum, point) => sum + point.turns, 0); const inputTurns = points.reduce((sum, point) => sum + point.turnsWithInput, 0); const outputTurns = points.reduce((sum, point) => sum + point.turnsWithOutput, 0);
@@ -202,14 +226,15 @@ function renderUsage(): void {
   const dates = points.map(point => point.date).sort(); text('usage-chart-summary', dates.length ? `${dates[0]} to ${dates.at(-1)} · recorded fields only` : 'No records in this range');
   renderUsageChart(points);
   const breakdown = get('usage-breakdown'); breakdown.replaceChildren();
-  for (const name of ['Claude', 'Codex']) {
-    const rows = points.filter(point => point.harness === name); const row = element('article', '', `usage-breakdown-row ${name.toLowerCase()}`);
+  const names = Object.keys(snapshot.report.usageHistory.byHarness).sort((a, b) => (ASSISTANT_ORDER.indexOf(a) + 1 || 99) - (ASSISTANT_ORDER.indexOf(b) + 1 || 99));
+  for (const name of names) {
+    const rows = points.filter(point => point.harness === name); const row = element('article', '', `usage-breakdown-row ${assistantClass(name)}`);
     const total = rows.reduce((sum, point) => sum + point.input + point.output, 0); const rowInput = rows.reduce((sum, point) => sum + point.input, 0); const rowCache = rows.reduce((sum, point) => sum + point.cacheRead, 0); const rowTurns = rows.reduce((sum, point) => sum + point.turns, 0); const known = rows.reduce((sum, point) => sum + Math.max(point.turnsWithInput, point.turnsWithOutput), 0);
-    const identity = element('div', '', 'usage-assistant'); identity.append(element('span', name === 'Claude' ? 'C' : 'Cdx', 'assistant-mark'), element('strong', assistantName(name)));
+    const identity = element('div', '', 'usage-assistant'); identity.append(element('span', assistantMark(name), 'assistant-mark'), element('strong', assistantName(name)));
     const coverage = rowTurns ? `${Math.min(100, Math.round(known / rowTurns * 100))}% coverage` : 'No turns'; const cache = rowInput && rowCache ? ` · ${Math.round(rowCache / rowInput * 100)}% cache-read` : '';
     row.append(identity, element('span', `${rowTurns.toLocaleString()} turns`, 'usage-cell'), element('span', total ? compact(total) : 'Unknown', 'usage-cell strong'), element('span', coverage + cache, 'usage-cell muted')); breakdown.append(row);
   }
-  if (view === 'usage') text('period', usageRange === 'all' ? 'All loaded history' : `Last ${usageRange} days`);
+  if (view === 'usage') text('period', usageRange === 'all' ? 'All loaded history' : usageRange === 'today' ? 'Today · since 12:00 AM' : `Last ${usageRange} days`);
 }
 function renderFindings(): void {
   const active = activeFindings(); text('nav-count', String(active.length));
@@ -264,7 +289,9 @@ function renderSources(): void {
   const list = get('source-list'); list.replaceChildren();
   for (const source of report.sources) {
     const row = element('article', '', 'source-row'); const copy = element('div', '', 'source-copy');
-    const label = source.harness === 'claude' ? 'Claude Code' : 'Codex'; const activity = report.usageHistory.byHarness[source.harness === 'claude' ? 'Claude' : 'Codex'];
+    const labels: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', vscode: 'VS Code Copilot', copilot: 'GitHub Copilot CLI' };
+    const harnesses: Record<string, string[]> = { claude: ['Claude'], codex: ['Codex'], vscode: ['VS Code Copilot'], copilot: ['GitHub Copilot CLI', 'GitHub Copilot App'] };
+    const label = labels[source.harness] || source.harness; const activity = harnesses[source.harness]?.map(name => report.usageHistory.byHarness[name]).find(Boolean);
     copy.append(element('strong', label), element('code', source.root));
     if (activity) copy.append(element('p', `${activity.sessions.toLocaleString()} sessions · ${activity.turns.toLocaleString()} turns · ${activityAge(activity.lastActivity)}`, 'source-activity'));
     row.append(icon('sources'), copy, element('span', source.exists ? 'Available' : 'Folder not found', 'source-status')); list.append(row);
@@ -274,10 +301,10 @@ function renderSources(): void {
   get('scan-warnings').replaceChildren(...report.scan.warnings.map(warning => element('p', warning)));
   text('excerpt-setting', snapshot?.config.includeExcerpts ? 'Short prompt and recorded-reasoning previews are enabled. Secret masking is best effort.' : 'Prompt and recorded-reasoning previews are off. Set "includeExcerpts": true in poe.local.json and restart Poe to show short, masked excerpts.');
 }
-function render(): void { renderMetrics(); renderAssistantActivity(); renderUsage(); renderFindings(); renderHistory(); renderSources(); }
+function render(): void { renderMetrics(); renderOverviewAnalysis(); renderAssistantActivity(); renderUsage(); renderFindings(); renderHistory(); renderSources(); }
 const PAGES: Record<string, [string, string, string]> = {
   overview: ['Overview', 'Your workflow, at a glance.', 'See what repeats. Choose what to improve.'],
-  usage: ['Token usage', 'See how your AI usage changes.', 'Compare recorded Claude Code and Codex activity over time.'],
+  usage: ['Token usage', 'See how your AI usage changes.', 'Compare recorded activity across your coding assistants.'],
   findings: ['Opportunities', 'Find your next improvement.', 'Review a pattern, check the examples, then decide what to try.'],
   history: ['Review history', 'Your decisions, in one place.', 'Keep a record of the ideas you have reviewed.'],
   sources: ['Connected sources', 'Connected to the way you work.', 'A transparent view of what Poe can observe.'],

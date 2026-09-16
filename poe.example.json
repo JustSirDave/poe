@@ -1,7 +1,9 @@
 {
   "sources": {
     "claude": { "enabled": true, "roots": [] },
-    "codex": { "enabled": true, "roots": [] }
+    "codex": { "enabled": true, "roots": [] },
+    "vscode": { "enabled": true, "roots": [] },
+    "copilot": { "enabled": true, "roots": [] }
   },
   "workspaceRoots": [],
   "lookbackDays": 5,

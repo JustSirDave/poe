@@ -1,6 +1,6 @@
 # Poe — local workflow coach
 
-A local, automatically refreshing dashboard and read-only MCP integration for Claude Code and Codex. This fork retains Microsoft's original extension and MIT notices. The standalone edition reads session logs, not project documentation.
+A local, automatically refreshing dashboard and read-only MCP integration for Claude Code, Codex, VS Code Copilot, and GitHub Copilot CLI. This fork retains Microsoft's original extension and MIT notices. The standalone edition reads session logs, not project documentation.
 
 ## Run
 
@@ -18,7 +18,7 @@ The standalone build has no VS Code requirement. The upstream extension remains 
 
 ## Using the dashboard
 
-Overview summarizes recent sessions and shows separate all-history activity cards for Claude Code and Codex. **Token usage** charts the recorded input and output fields over 7, 30, or 90 days, or all loaded history. **Opportunities** remain suggestions based only on current patterns, not changes already applied or proven savings. Filter them by Skills, Memory, Workflows, or Response length.
+Overview starts with an analysis of activity recorded since local midnight and shows separate all-history activity cards for every connected assistant. **Token usage** charts the recorded input and output fields for Today, 7, 30, or 90 days, or all loaded history. Today runs from 12:00 AM in the computer's local timezone through the present. **Opportunities** remain suggestions based only on current patterns, not changes already applied or proven savings. Filter them by Skills, Memory, Workflows, or Response length.
 
 Choose **Review idea** to see what was noticed, why it might help, what to try, and the session references. **Copy review prompt** prepares a request you can paste into Claude Code or Codex to evaluate the idea. Prompt excerpts remain controlled by your local configuration. **Dismiss idea** moves the decision to Review history, where you can reopen it.
 
@@ -36,6 +36,8 @@ npm run poe -- --config poe.local.json
 
 - Claude: `<CLAUDE_CONFIG_DIR>/projects`, or `~/.claude/projects`.
 - Codex: `<CODEX_HOME>/sessions`, `archived_sessions`, and `archived-sessions`, or the corresponding directories under `~/.codex`.
+- VS Code Copilot: the stable and Insiders `User/workspaceStorage` folders.
+- GitHub Copilot CLI: `~/.copilot/session-state` and `~/.copilot/history-session-state`.
 
 Set `enabled: false` to disable a source. Explicit roots must be directories containing session JSONL files, not your entire home or project directory. Relative paths resolve against the config file's directory. Symlink entries are skipped. On Windows, use forward slashes or escaped backslashes in JSON. Windows and WSL have separate home directories: configure the location where the sessions actually live.
 
@@ -60,7 +62,7 @@ Response-length candidates require an individual conversational assistant messag
 - Recurring recorded tool sequences as possible workflow candidates.
 - Large recorded response signals, with explicit caveats.
 - Input/output token fields and their turn coverage, when available.
-- Daily historical token trends and per-assistant session, turn, cache-read, and coverage summaries.
+- A local-midnight Today view, daily historical token trends, and per-assistant session, turn, cache-read, and coverage summaries.
 - Evidence references, optional masked prompt excerpts, candidate checklists, and persistent dismiss/reopen history.
 - Bounded read-only MCP tools and a one-shot JSON report.
 

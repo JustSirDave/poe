@@ -25,7 +25,7 @@ for (let i = 0; i < 3; i++) {
   await fs.writeFile(path.join(logs,`session-${i}.jsonl`),lines.map(line=>JSON.stringify(line)).join('\n'));
 }
 const config = path.join(root,'poe.local.json');
-await fs.writeFile(config, JSON.stringify({sources:{claude:{enabled:false},codex:{roots:[logs]}},stateDir:path.join(root,'state'),port:0}));
+await fs.writeFile(config, JSON.stringify({sources:{claude:{enabled:false},codex:{roots:[logs]},vscode:{enabled:false},copilot:{enabled:false}},stateDir:path.join(root,'state'),port:0}));
 const children = [];
 function launch(extra) {
   const child = spawn(process.execPath,['dist/poe.cjs','--config',config,...extra],{stdio:['pipe','pipe','pipe']});
