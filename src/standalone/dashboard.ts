@@ -148,21 +148,6 @@ function activityAge(timestamp?: number): string {
   const hours = Math.max(0, (Date.now() - timestamp) / 3600000);
   return hours < 1 ? 'Active within the past hour' : hours < 24 ? `Active ${Math.floor(hours)} hours ago` : `Active ${Math.floor(hours / 24)} days ago`;
 }
-function renderAssistantActivity(): void {
-  const list = get('source-glance-list'); list.replaceChildren();
-  const entries = Object.entries(snapshot?.report?.usageHistory.byHarness || {}).sort(([a], [b]) => (ASSISTANT_ORDER.indexOf(a) + 1 || 99) - (ASSISTANT_ORDER.indexOf(b) + 1 || 99));
-  for (const [name, data] of entries) {
-    const card = element('article', '', `assistant-card ${assistantClass(name)}`);
-    const top = element('div', '', 'assistant-card-top');
-    const identity = element('div'); identity.append(element('span', assistantMark(name), 'assistant-mark'), element('strong', assistantName(name)));
-    top.append(identity, element('span', activityAge(data.lastActivity), 'source-status'));
-    const recorded = data.input + data.output;
-    const cacheDetail = data.cacheRead ? ` · ${compact(data.cacheRead)} cache-read` : '';
-    card.append(top, element('b', `${data.sessions.toLocaleString()} sessions · ${data.turns.toLocaleString()} turns`), element('p', recorded ? `${compact(recorded)} tokens processed across loaded history${cacheDetail}` : 'Token fields are unavailable in the loaded logs.'));
-    list.append(card);
-  }
-  if (!entries.length) list.append(emptyState('No assistant history loaded', 'Check Connected sources, then refresh your sessions.'));
-}
 function usagePoints(): NonNullable<CoachReport['usageHistory']>['days'] {
   const points = snapshot?.report?.usageHistory.days || [];
   if (usageRange === 'all') return points;
@@ -206,17 +191,56 @@ function renderUsageChart(points: ReturnType<typeof usagePoints>): void {
   }
   holder.append(svg);
 }
-function renderOverviewAnalysis(): void {
-  const points = (snapshot?.report?.usageHistory.days || []).filter(point => point.date === localDateKey());
-  const turns = points.reduce((sum, point) => sum + point.turns, 0); const input = points.reduce((sum, point) => sum + point.input, 0); const output = points.reduce((sum, point) => sum + point.output, 0); const cache = points.reduce((sum, point) => sum + point.cacheRead, 0); const total = input + output;
-  const top = points.slice().sort((a, b) => (b.input + b.output) - (a.input + a.output))[0];
-  text('overview-analysis-title', turns ? `${turns.toLocaleString()} turns recorded since midnight.` : 'No session activity recorded today yet.');
-  const share = top && total ? Math.round((top.input + top.output) / total * 100) : 0; const cacheShare = input ? Math.round(cache / input * 100) : 0;
-  text('overview-analysis-copy', total ? `${assistantName(top.harness)} represents ${share}% of today’s recorded processed tokens. ${cacheShare}% of processed input came from cache reads.` : turns ? 'Poe found activity, but today’s logs do not include token fields yet.' : 'Historical sessions remain available below and on Token usage.');
-  const stats = get('overview-analysis-stats'); stats.replaceChildren();
-  for (const [label, value] of [['Processed', total ? compact(total) : 'Unknown'], ['Turns', turns.toLocaleString()], ['Most active', top ? assistantName(top.harness) : '—']]) {
-    const item = element('div'); item.append(element('span', label), element('strong', value)); stats.append(item);
+type AssistantSummary = { name: string; sessions: number; turns: number; input: number; output: number };
+function overviewPoints(): CoachReport['usageHistory']['days'] {
+  const days = snapshot?.report?.activeWindowDays || 5; const cutoff = new Date(); cutoff.setHours(0, 0, 0, 0); cutoff.setDate(cutoff.getDate() - days + 1);
+  const key = localDateKey(cutoff.getTime()); return (snapshot?.report?.usageHistory.days || []).filter(point => point.date >= key);
+}
+function summarizeAssistants(points: CoachReport['usageHistory']['days']): AssistantSummary[] {
+  const names = Object.keys(snapshot?.report?.usageHistory.byHarness || {});
+  return names.map(name => {
+    const rows = points.filter(point => point.harness === name);
+    return { name, sessions: rows.reduce((sum, point) => sum + point.sessions, 0), turns: rows.reduce((sum, point) => sum + point.turns, 0), input: rows.reduce((sum, point) => sum + point.input, 0), output: rows.reduce((sum, point) => sum + point.output, 0) };
+  }).sort((a, b) => b.turns - a.turns || (ASSISTANT_ORDER.indexOf(a.name) + 1 || 99) - (ASSISTANT_ORDER.indexOf(b.name) + 1 || 99));
+}
+function assistantIdentity(name: string): HTMLElement {
+  const identity = element('div', '', 'chart-assistant'); identity.append(element('span', assistantMark(name), 'assistant-mark'), element('strong', assistantName(name))); return identity;
+}
+function renderActivityBars(rows: AssistantSummary[]): void {
+  const holder = get('overview-activity-chart'); holder.replaceChildren(); const max = Math.max(1, ...rows.map(row => row.turns));
+  if (!rows.some(row => row.turns)) { holder.append(emptyState('No recent activity recorded', 'Refresh sessions or open the full history for older activity.')); return; }
+  for (const row of rows) {
+    const item = element('article', '', `assistant-chart-row ${assistantClass(row.name)}`); item.setAttribute('aria-label', `${assistantName(row.name)}: ${row.turns} turns`);
+    const header = element('div', '', 'assistant-chart-label'); header.append(assistantIdentity(row.name), element('span', `${row.turns.toLocaleString()} turns`));
+    const track = element('div', '', 'assistant-bar-track'); const fill = element('span', '', 'assistant-bar-fill'); fill.style.width = `${row.turns / max * 100}%`; track.append(fill); item.append(header, track); holder.append(item);
   }
+}
+function renderTokenBars(rows: AssistantSummary[]): void {
+  const holder = get('overview-token-chart'); holder.replaceChildren(); const maxInput = Math.max(1, ...rows.map(row => row.input)); const maxOutput = Math.max(1, ...rows.map(row => row.output));
+  if (!rows.some(row => row.input || row.output)) { holder.append(emptyState('No recent token fields recorded', 'The session logs in this window do not expose token values.')); return; }
+  for (const row of rows) {
+    const item = element('article', '', `token-compare-row ${assistantClass(row.name)}`); const header = element('div', '', 'token-row-head'); header.append(assistantIdentity(row.name), element('strong', compact(row.input + row.output)));
+    const series = element('div', '', 'token-series-list');
+    for (const [label, value, max, className] of [['Input', row.input, maxInput, 'input'], ['Output', row.output, maxOutput, 'output']] as const) {
+      const line = element('div', '', 'token-series'); const labelNode = element('div', '', 'token-series-label'); labelNode.append(element('span', label), element('strong', value ? compact(value) : '0'));
+      const track = element('div', '', 'token-bar-track'); const fill = element('span', '', `token-bar-fill ${className}`); fill.style.width = `${value / max * 100}%`; fill.title = `${assistantName(row.name)} ${label.toLowerCase()}: ${value.toLocaleString()} tokens`; track.append(fill); line.append(labelNode, track); series.append(line);
+    }
+    item.append(header, series); holder.append(item);
+  }
+}
+function renderOverviewAnalysis(): void {
+  if (!snapshot?.report) return;
+  const points = overviewPoints(); const rows = summarizeAssistants(points); const days = snapshot.report.activeWindowDays || 5;
+  const sessions = snapshot.report.sessionCount; const turns = points.reduce((sum, point) => sum + point.turns, 0); const input = points.reduce((sum, point) => sum + point.input, 0); const output = points.reduce((sum, point) => sum + point.output, 0); const total = input + output;
+  const active = rows.filter(row => row.turns > 0); const leader = active[0];
+  text('overview-analysis-title', turns ? `${turns.toLocaleString()} turns across ${active.length} ${active.length === 1 ? 'assistant' : 'assistants'}.` : 'No recent assistant activity recorded yet.');
+  text('overview-analysis-copy', leader ? `${assistantName(leader.name)} handled the most turns in the latest ${days}-day activity window.` : `Poe will compare your assistants across the latest ${days} days as sessions appear.`);
+  const stats = get('overview-analysis-stats'); stats.replaceChildren();
+  const inputShare = total ? Math.round(input / total * 1000) / 10 : 0;
+  for (const [label, value, detail] of [['Processed tokens', total ? compact(total) : 'Unknown', total ? `${inputShare}% input` : 'No token fields'], ['Input tokens', input ? compact(input) : 'Unknown', `${points.reduce((sum, point) => sum + point.turnsWithInput, 0)} turns measured`], ['Output tokens', output ? compact(output) : 'Unknown', `${points.reduce((sum, point) => sum + point.turnsWithOutput, 0)} turns measured`], ['Sessions', sessions.toLocaleString(), `${turns.toLocaleString()} turns`]]) {
+    const card = element('article'); const top = element('div', '', 'overview-kpi-label'); top.append(element('span', label), element('i')); card.append(top, element('strong', value), element('small', detail)); stats.append(card);
+  }
+  renderActivityBars(rows); renderTokenBars(rows);
 }
 function renderUsage(): void {
   if (!snapshot?.report) return;
@@ -257,12 +281,7 @@ function renderFindings(): void {
 }
 function renderMetrics(): void {
   if (!snapshot?.report) return;
-  const { report, config } = snapshot; const tokens = report.recordedTokens;
-  text('sessions', report.sessionCount.toLocaleString()); text('window', `${report.requestCount.toLocaleString()} recorded turns`);
-  text('input', tokens.turnsWithInput ? compact(tokens.input) : 'Unknown'); get('input').title = tokens.input.toLocaleString();
-  text('output', tokens.turnsWithOutput ? compact(tokens.output) : 'Unknown'); get('output').title = tokens.output.toLocaleString();
-  text('coverage', `${tokens.turnsWithInput} of ${report.requestCount} turns include input data`);
-  text('output-coverage', `${tokens.turnsWithOutput} of ${report.requestCount} turns include output data`);
+  const { report, config } = snapshot;
   const reviewed = report.responseReview;
   text('response-context-summary', reviewed ? `Long messages: ${reviewed.requestedDetail} matched requests for detail · ${reviewed.unclassified} unclassified · ${reviewed.brevityConflict} with brevity signals. These are local text rules, not quality scores.` : '');
   text('period', `Active: last ${report.activeWindowDays || 5} days`);
@@ -301,7 +320,7 @@ function renderSources(): void {
   get('scan-warnings').replaceChildren(...report.scan.warnings.map(warning => element('p', warning)));
   text('excerpt-setting', snapshot?.config.includeExcerpts ? 'Short prompt and recorded-reasoning previews are enabled. Secret masking is best effort.' : 'Prompt and recorded-reasoning previews are off. Set "includeExcerpts": true in poe.local.json and restart Poe to show short, masked excerpts.');
 }
-function render(): void { renderMetrics(); renderOverviewAnalysis(); renderAssistantActivity(); renderUsage(); renderFindings(); renderHistory(); renderSources(); }
+function render(): void { renderMetrics(); renderOverviewAnalysis(); renderUsage(); renderFindings(); renderHistory(); renderSources(); }
 const PAGES: Record<string, [string, string, string]> = {
   overview: ['Overview', 'Your workflow, at a glance.', 'See what repeats. Choose what to improve.'],
   usage: ['Token usage', 'See how your AI usage changes.', 'Compare recorded activity across your coding assistants.'],
