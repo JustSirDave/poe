@@ -6,7 +6,7 @@ import { memoryFindings } from './memory-findings';
 import { redactSecrets } from '../core/redact-secrets';
 import type { CoachConfig } from './config';
 
-export interface Evidence { sessionId: string; requestId: string; harness: string; workspace: string; timestamp: number | null; contextRequestId?: string; toolCallIds?: string[]; reasoningIds?: string[]; excerpt?: string }
+export interface Evidence { sessionId: string; requestId: string; harness: string; workspace: string; timestamp: number | null; contextRequestId?: string; toolCallIds?: string[]; reasoningIds?: string[]; details?: string[]; excerpt?: string }
 export interface Finding {
   id: string;
   firstSeen?: number;

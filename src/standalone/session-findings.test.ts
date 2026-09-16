@@ -20,21 +20,22 @@ describe('within-session signals', () => {
     const f = fixture(harness); f.call('a'); f.call('a'); f.call('b');
     expect(f.findings()).toEqual([]);
     f.result('a', true); f.result('b', true);
-    expect(f.findings()[0].title).toBe('Same action failed repeatedly');
+    expect(f.findings()[0].title).toBe('Read repeated the same failed action');
     expect(f.findings()[0].evidence[0].toolCallIds).toEqual(['a', 'b']);
+    expect(f.findings()[0].evidence[0].details).toHaveLength(2);
     expect(JSON.stringify(f.parser.snapshot()?.toolActivity)).not.toMatch(/secret|private output/);
   });
   it('flags identical reads but resets them after another action and ignores polling', () => {
     const f = fixture(); for (const id of ['a', 'b', 'c']) { f.call(id); f.result(id); }
-    expect(f.findings()[0].title).toBe('Same content read repeatedly');
+    expect(f.findings()[0].title).toBe('The same content was read repeatedly');
     const g = fixture(); for (const id of ['a', 'b', 'c']) { g.call(id); g.result(id); g.call(id + '-edit', 'Edit'); g.result(id + '-edit'); }
-    expect(g.findings().some(item => item.title === 'Same content read repeatedly')).toBe(false);
+    expect(g.findings().some(item => item.title === 'The same content was read repeatedly')).toBe(false);
     const p = fixture(); for (const id of ['a', 'b', 'c']) { p.call(id, 'write_stdin'); p.result(id, true); }
     expect(p.findings()).toEqual([]);
   });
   it('distinguishes failure bursts and repeated non-read results', () => {
     const f = fixture(); for (const [id, name] of [['a', 'exec_command'], ['b', 'write_file'], ['c', 'browser_click']]) { f.call(id, name, { target: id }); f.result(id, true); }
-    expect(f.findings()[0].title).toBe('Several tool actions failed');
+    expect(f.findings()[0].title).toBe('Several different tool actions failed');
     const g = fixture(); for (const id of ['a', 'b', 'c']) { g.call(id, 'exec_command', { cmd: 'same' }); g.result(id); }
     expect(g.findings()[0].title).toBe('Identical calls returned identical results');
   });
@@ -42,8 +43,8 @@ describe('within-session signals', () => {
     const f = fixture();
     f.call('a', 'exec_command', { cmd: 'first' }); f.result('a', true);
     f.call('b', 'exec_command', { cmd: 'second' }); f.result('b', true);
-    expect(f.findings()[0].title).toBe('Different attempts failed during the same task');
-    expect(f.findings()[0].explanation).toContain('sensible diagnostic sequence');
+    expect(f.findings()[0].title).toContain('Exec Command failed repeatedly');
+    expect(f.findings()[0].suggestion).toContain('working directory');
 
     const g = fixture();
     g.append({ type: 'event_msg', timestamp: now - 2000, payload: { type: 'user_message', message: 'First task' } });
@@ -60,7 +61,7 @@ describe('within-session signals', () => {
         ? { type: 'event_msg', timestamp: stamp, payload: { type: 'agent_reasoning', text: 'Recheck the same plan with token sk-12345678901234567890.' } }
         : { type: 'assistant', timestamp: stamp, message: { content: [{ type: 'thinking', thinking: 'Recheck the same plan with token sk-12345678901234567890.' }] } });
     }
-    const finding = f.findings().find(item => item.title === 'Recorded reasoning repeated during one task');
+    const finding = f.findings().find(item => item.title === 'The same recorded reasoning returned during one task');
     expect(finding?.occurrences).toBe(3);
     expect(finding?.evidence[0].reasoningIds).toHaveLength(3);
     expect(finding?.evidence[0].excerpt).not.toContain('sk-12345678901234567890');
@@ -69,6 +70,19 @@ describe('within-session signals', () => {
     const f = fixture('codex', true);
     f.append({ type: 'response_item', timestamp: now, payload: { type: 'reasoning', encrypted_content: 'encrypted-only' } });
     expect(f.parser.snapshot()?.reasoningActivity).toEqual([]);
+  });
+  it('does not surface repeated reasoning when no inspectable preview exists', () => {
+    const f = fixture('codex', false);
+    for (let i = 0; i < 3; i++) f.append({ type: 'event_msg', timestamp: now - 3000 + i * 100, payload: { type: 'agent_reasoning', text: 'Same private reasoning' } });
+    expect(f.findings()).toEqual([]);
+  });
+  it('merges the same actionable failure across sessions', () => {
+    const first = fixture('claude'); first.session.sessionId = 'one';
+    const second = fixture('claude'); second.session.sessionId = 'two';
+    for (const target of [first, second]) for (const id of ['a', 'b']) { target.call(id, 'Glob', { pattern: '**/*' }); target.result(id, true); }
+    const findings = sessionFindings([first.parser.snapshot()!, second.parser.snapshot()!], now - 5 * 86400000, now);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ occurrences: 4, sessionCount: 2 });
   });
   it('recognizes a user correction without claiming a violation and expires old events', () => {
     const f = fixture(); f.session.requests[0].messageText = 'You ignored my instruction to preserve the tests.';
@@ -91,11 +105,20 @@ it('recognizes structured exit codes without interpreting error words as failure
     f.call(id, 'exec_command');
     f.parser.append(JSON.stringify({ type: 'response_item', payload: { type: 'function_call_output', call_id: id, output: JSON.stringify({ exit_code: 1, output: 'failed' }) } }));
   }
-  expect(f.findings()[0].title).toBe('Same action failed repeatedly');
+  expect(f.findings()[0].title).toBe('Exec Command repeated the same failed action');
   const g = fixture();
   for (const id of ['a', 'b']) {
     g.call(id, 'exec_command');
     g.parser.append(JSON.stringify({ type: 'response_item', payload: { type: 'function_call_output', call_id: id, output: 'Documentation describes an error' } }));
   }
   expect(g.findings()).toEqual([]);
+});
+
+it('extracts an exit code from nested Claude tool-result content', () => {
+  const f = fixture('claude');
+  for (const [id, code] of [['a', 6], ['b', 1]] as const) {
+    f.call(id, 'Bash', { command: `task-${id}` });
+    f.append({ type: 'user', timestamp: now, message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: [{ type: 'text', text: `Process exited with code ${code}\nprivate output` }] }] } });
+  }
+  expect(f.findings()[0].evidence[0].details).toEqual(['Bash · exit code 6', 'Bash · exit code 1']);
 });

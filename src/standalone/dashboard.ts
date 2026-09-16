@@ -101,7 +101,7 @@ function step(title: string, description: string, number: string, recommended = 
 function openIdea(finding: Finding): void {
   const copy = IDEA_COPY[finding.kind]; const body = get('idea-body'); body.replaceChildren();
   text('idea-kind', copy.label); const title = element('h2', finding.responseIntent === 'unclassified' ? 'Long messages with unclear intent' : findingTitle(finding)); title.id = 'idea-title';
-  body.append(title, meta(finding), step('What Poe noticed', finding.explanation, '1'), step('Why it may help', copy.benefit, '2'), step('What to try', copy.next, '3', true));
+  body.append(title, meta(finding), step('What Poe noticed', finding.explanation, '1'), step('Why it may help', copy.benefit, '2'), step('What to try', finding.suggestion || copy.next, '3', true));
   const examples = element('section', '', 'review-section'); examples.append(element('h3', 'Session examples'));
   examples.append(element('p', `Showing ${finding.evidence.length} latest matching examples within the active ${snapshot?.report?.activeWindowDays || 5}-day window. Older sessions can explain task context but do not count toward recommendations.`));
   if (!finding.evidence.some(item => item.excerpt)) examples.append(element('p', 'Prompt and recorded-reasoning previews are off. In poe.local.json, set "includeExcerpts": true, then restart Poe with --config poe.local.json. Previews are short and secret masking is best effort.'));
@@ -111,6 +111,7 @@ function openIdea(finding: Finding): void {
     const ageHours = item.timestamp ? Math.max(0, (Date.now() - item.timestamp) / 3600000) : null;
     const age = ageHours === null ? '' : ageHours < 1 ? ' · Within the past hour' : ageHours < 24 ? ` · ${Math.floor(ageHours)} hours ago` : ` · ${Math.floor(ageHours / 24)} days ago`;
     row.append(element('strong', `${item.harness === 'Claude' ? 'Claude Code' : item.harness} · ${projectName(item.workspace)}`), element('p', date + age));
+    if (item.details?.length) { const details = element('div', '', 'signal-details'); for (const detail of item.details) details.append(element('span', detail)); row.append(details); }
     if (item.excerpt) row.append(element('blockquote', item.excerpt));
     const refs = element('details', '', 'technical'); refs.append(element('summary', 'Session reference'), element('code', `Project: ${item.workspace}\nSession: ${item.sessionId}\nRequest: ${item.requestId}\nTask context: ${item.contextRequestId || item.requestId}${item.toolCallIds?.length ? '\nTool calls: ' + item.toolCallIds.join(', ') : ''}${item.reasoningIds?.length ? '\nRecorded reasoning: ' + item.reasoningIds.join(', ') : ''}`)); row.append(refs); examples.append(row);
   }

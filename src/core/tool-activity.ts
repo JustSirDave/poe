@@ -6,6 +6,7 @@ import { redactSecrets } from './redact-secrets';
 export interface ToolActivity {
   id: string; name: string; signature: string; timestamp: number | null;
   status: 'pending' | 'completed' | 'failed'; outputHash?: string;
+  failureCategory?: string; exitCode?: number;
   read: boolean; polling: boolean; epoch: number; turn: number;
 }
 export interface ReasoningActivity {
@@ -25,6 +26,19 @@ function strings(value: unknown): string[] {
     .filter(([key]) => ['text', 'thinking', 'summary', 'content'].includes(key))
     .flatMap(([, item]) => strings(item));
   return [];
+}
+function failureCategory(text: string, exitCode: number | undefined, toolName: string): string {
+  if (/permission denied|access denied|not permitted/i.test(text)) return 'permission denied';
+  if (/timed? out|timeout/i.test(text)) return 'timeout';
+  if (/old_string|old string|not found in file|no match/i.test(text)) return 'edit target not found';
+  if (/multiple matches|appears more than once/i.test(text)) return 'edit target is ambiguous';
+  if (/not found|no such file|cannot find/i.test(text)) return 'command or file not found';
+  if (/test.*fail|failed.*test|assertionerror/i.test(text)) return 'test failure';
+  if (/network|dns|econn|connection/i.test(text)) return 'network failure';
+  if (/syntax error|parse error/i.test(text)) return 'syntax or parse error';
+  if (exitCode !== undefined) return `exit code ${exitCode}`;
+  const short = toolName.split('.').pop()!.toLowerCase();
+  return short === 'edit' ? 'edit failed' : short === 'glob' ? 'search failed' : 'reported tool error';
 }
 
 /** Bounded metadata only: raw arguments/results are not retained; reasoning previews are opt-in. */
@@ -66,10 +80,12 @@ export function observeTools(parser: SessionAccumulator, harness: 'claude' | 'co
     let decoded = output;
     if (typeof output === 'string') { try { decoded = JSON.parse(output) as unknown; } catch { /* Plain tool output is also supported. */ } }
     const obj = record(decoded);
-    const text = typeof output === 'string' ? output : serialized(output);
+    const text = typeof output === 'string' ? output : strings(output).join('\n') || serialized(output);
     const exit = typeof obj.exit_code === 'number' ? obj.exit_code : typeof obj.exitCode === 'number' ? obj.exitCode : undefined;
-    const match = text.match(/(?:^|\n)Process exited with code (-?\d+)(?:\r?\n|$)/);
-    item.status = explicitError === true || obj.isError === true || (exit !== undefined && exit !== 0) || (match && Number(match[1]) !== 0) ? 'failed' : 'completed';
+    const match = text.match(/\b(?:process exited with code|exit code|exit_code["': ]+)\s*(-?\d+)\b/i);
+    const code = exit ?? (match ? Number(match[1]) : undefined);
+    item.status = explicitError === true || obj.isError === true || (code !== undefined && code !== 0) ? 'failed' : 'completed';
+    if (item.status === 'failed') { item.failureCategory = failureCategory(text, code, item.name); if (code !== undefined) item.exitCode = code; }
     item.outputHash = hash(text);
   };
   return {

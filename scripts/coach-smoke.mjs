@@ -90,7 +90,7 @@ try {
       await page.getByRole('link',{name:/^Opportunities/}).click();
       await page.getByRole('button',{name:/^Session signals/}).click();
       await page.getByRole('button',{name:'Review idea →'}).first().click();
-      await page.getByRole('dialog').getByRole('heading',{name:'Same action failed repeatedly',exact:true}).waitFor();
+      await page.getByRole('dialog').getByRole('heading',{name:'Exec Command repeated the same failed action',exact:true}).waitFor();
       await page.keyboard.press('Escape');
       await page.getByRole('button',{name:/^Skills/}).click();
       await page.getByRole('button',{name:'Review idea →'}).first().click();
