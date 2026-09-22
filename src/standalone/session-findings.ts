@@ -20,13 +20,23 @@ function targetedAction(group: ToolActivity[]): string {
   if (failures.includes('test failure')) return 'Read the first failing assertion, change the implicated code or test setup, and rerun only the affected test before broadening verification.';
   return 'Inspect the first recorded failure, identify what changed between attempts, and retry only after addressing that cause.';
 }
+/** Cap on stored/shown evidence per merged finding; matches analysis.ts's createFinding() sample size. */
+const MAX_EVIDENCE = 3;
 function consolidate(findings: Finding[]): Finding[] {
   const merged = new Map<string, Finding>();
+  // Tracks every session contributing to a merged key, independent of the capped evidence
+  // array, so sessionCount stays accurate after older evidence is trimmed off the display list.
+  const sessionKeys = new Map<string, Set<string>>();
   for (const finding of findings) {
-    const key = `${finding.kind}:${finding.title}:${finding.suggestion}`; const existing = merged.get(key);
+    const key = `${finding.kind}:${finding.title}:${finding.suggestion}`;
+    const keys = sessionKeys.get(key) || new Set<string>();
+    for (const item of finding.evidence) keys.add(`${item.harness}:${item.sessionId}`);
+    sessionKeys.set(key, keys);
+    const existing = merged.get(key);
     if (!existing) { merged.set(key, { ...finding, evidence: [...finding.evidence] }); continue; }
-    existing.occurrences += finding.occurrences; existing.evidence.push(...finding.evidence);
-    existing.sessionCount = new Set(existing.evidence.map(item => `${item.harness}:${item.sessionId}`)).size;
+    existing.occurrences += finding.occurrences;
+    existing.evidence = [...existing.evidence, ...finding.evidence].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)).slice(0, MAX_EVIDENCE);
+    existing.sessionCount = keys.size;
     existing.firstSeen = Math.min(existing.firstSeen || Infinity, finding.firstSeen || Infinity);
     existing.lastSeen = Math.max(existing.lastSeen || 0, finding.lastSeen || 0);
     existing.explanation = `This pattern was recorded ${existing.occurrences} times across ${existing.sessionCount} sessions. The examples below identify the affected projects, tool calls, and recorded outcomes.`;
@@ -105,7 +115,7 @@ export function sessionFindings(sessions: Session[], cutoff: number, now: number
       const id = createHash('sha256').update(`${session.harness}:${session.sessionId}:reasoning:${turn}`).digest('hex').slice(0, 20);
       findings.push({ id, kind: 'session', title: 'The same recorded reasoning returned during one task', explanation: `${groups.length} distinct inspectable reasoning ${groups.length === 1 ? 'passage was' : 'passages were'} each recorded at least three times during one request (${combined.length} records total). Review the preview to distinguish duplicated logging from a reasoning loop.`, occurrences: combined.length, sessionCount: 1, firstSeen: first.timestamp!, lastSeen: last.timestamp!, evidence: [{ sessionId: session.sessionId, requestId: request.requestId, harness: session.harness, workspace: session.workspaceRootPath || session.workspaceName, timestamp: last.timestamp, reasoningIds: combined.slice(-20).map(item => item.id), details: [`${groups.length} repeated passages · ${combined.length} records`], excerpt: combined.find(item => item.excerpt)?.excerpt }], suggestion: 'If the same plan returned without new evidence, add a checkpoint after the second repeat: state the unresolved assumption, gather one new fact, then choose a different next action.', caution: 'Poe can inspect only reasoning text or summaries recorded in local logs. Hidden or encrypted thinking is unavailable. Identical records can be logging duplication, and no token savings are measured.', draft: '# Repeated recorded reasoning\n\nInspect the preview and surrounding result. If no new evidence appeared, add a stop-and-reframe checkpoint after the second repeat.' });
     }
-    for (const request of session.requests) {
+    for (const [index, request] of session.requests.entries()) {
       if (request.timestamp === null || request.timestamp < cutoff || request.timestamp > now) continue;
       const text = request.messageText.split('## My request:').at(-1)!.trim();
       if (text.length > 1500 || text.startsWith('<') || !/^(?:no[,!.]?\s*)?(?:you (?:ignored|did not follow|didn't follow)|that(?:'s| is) not what I (?:asked|requested)|I (?:asked|told) you (?:to|not to))\b/i.test(text)) continue;
@@ -113,7 +123,7 @@ export function sessionFindings(sessions: Session[], cutoff: number, now: number
       emit('correction', 'User corrected the assistant’s direction', 'An explicit user correction may indicate a missed instruction. Compare it with the original request and response; this is not automatic proof of noncompliance.', [event], 'Extract the specific instruction that was missed and add only that durable rule to the relevant project or personal guidance. Keep one-off task details out.');
       const finding = findings.at(-1)!; delete finding.evidence[0].toolCallIds; delete finding.evidence[0].details;
       finding.evidence[0].requestId = request.requestId;
-      finding.evidence[0].contextRequestId = session.requests[Math.max(0, session.requests.indexOf(request) - 1)].requestId;
+      finding.evidence[0].contextRequestId = session.requests[Math.max(0, index - 1)].requestId;
     }
   }
   return consolidate(findings);

@@ -18,7 +18,7 @@ The standalone build has no VS Code requirement. The upstream extension remains 
 
 ## Using the dashboard
 
-Overview starts with an analysis of activity recorded since local midnight and shows separate all-history activity cards for every connected assistant. **Token usage** charts the recorded input and output fields for Today, 7, 30, or 90 days, or all loaded history. Today runs from 12:00 AM in the computer's local timezone through the present. **Opportunities** remain suggestions based only on current patterns, not changes already applied or proven savings. Filter them by Skills, Memory, Workflows, or Response length.
+Overview starts with an analysis of activity recorded since local midnight and shows separate all-history activity cards for every connected assistant. **Token usage** charts the recorded input and output fields for Today, 7, 30, or 90 days, or all loaded history. Today runs from 12:00 AM in the computer's local timezone through the present. **Findings** remain suggestions based only on current patterns, not changes already applied or proven savings. Filter them by Skills, Memory, Workflows, or Response length.
 
 Choose **Review idea** to see what was noticed, why it might help, what to try, and the session references. **Copy review prompt** prepares a request you can paste into Claude Code or Codex to evaluate the idea. Prompt excerpts remain controlled by your local configuration. **Dismiss idea** moves the decision to Review history, where you can reopen it.
 

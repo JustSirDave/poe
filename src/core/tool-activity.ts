@@ -48,9 +48,11 @@ export function observeTools(parser: SessionAccumulator, harness: 'claude' | 'co
   const reasoning: ReasoningActivity[] = [];
   const reasoningSeen = new Set<string>();
   let epoch = 0; let turn = 0; let dropped = 0; let reasoningDropped = 0; let lastUser = '';
-  const user = (text: string, timestamp: number | null) => {
+  const user = (text: string, timestamp: number | null, dedupeByTextOnly = false) => {
     if (!text.trim() || isHarnessInjectedContext(text)) return;
-    const key = hash(text) + ':' + (timestamp ?? '');
+    // Codex logs one user turn twice (an event_msg and a response_item) and the two
+    // representations can carry different timestamps, so those callers dedupe by text alone.
+    const key = dedupeByTextOnly ? hash(text) : hash(text) + ':' + (timestamp ?? '');
     if (key !== lastUser) { turn++; lastUser = key; }
   };
   const thought = (value: unknown, timestamp: number | null) => {
@@ -61,7 +63,7 @@ export function observeTools(parser: SessionAccumulator, harness: 'claude' | 'co
       reasoningSeen.add(duplicate);
       reasoning.push({ id: hash(`${digest}:${timestamp ?? reasoning.length}`).slice(0, 20), hash: digest, timestamp, length: text.length, turn,
         ...(includeExcerpts ? { excerpt: redactSecrets(text).slice(0, 240) } : {}) });
-      if (reasoning.length > 2000) { reasoning.shift(); reasoningDropped++; }
+      if (reasoning.length > 2000) { reasoningSeen.delete(`${reasoning[0].hash}:${reasoning[0].timestamp ?? ''}`); reasoning.shift(); reasoningDropped++; }
     }
   };
   const call = (id: unknown, name: unknown, args: unknown, timestamp: number | null) => {
@@ -83,7 +85,7 @@ export function observeTools(parser: SessionAccumulator, harness: 'claude' | 'co
     const obj = record(decoded);
     const text = typeof output === 'string' ? output : strings(output).join('\n') || serialized(output);
     const exit = typeof obj.exit_code === 'number' ? obj.exit_code : typeof obj.exitCode === 'number' ? obj.exitCode : undefined;
-    const match = text.match(/\b(?:process exited with code|exit code|exit_code["': ]+)\s*(-?\d+)\b/i);
+    const match = text.match(/(?:^|\n)\s*(?:process exited with code|exit code|exit_code["': ]+)\s*(-?\d+)\b/i);
     const code = exit ?? (match ? Number(match[1]) : undefined);
     item.status = explicitError === true || obj.isError === true || (code !== undefined && code !== 0) ? 'failed' : 'completed';
     if (item.status === 'failed') { item.failureCategory = failureCategory(text, code, item.name); if (code !== undefined) item.exitCode = code; }
@@ -99,8 +101,8 @@ export function observeTools(parser: SessionAccumulator, harness: 'claude' | 'co
       if (harness === 'codex') {
         const p = record(raw.payload);
         if (raw.type !== 'response_item' && raw.type !== 'event_msg') return;
-        if (p.type === 'user_message') user(typeof p.message === 'string' ? p.message : typeof p.text === 'string' ? p.text : '', timestamp);
-        if (raw.type === 'response_item' && p.role === 'user') user(strings(p.content).join('\n'), timestamp);
+        if (p.type === 'user_message') user(typeof p.message === 'string' ? p.message : typeof p.text === 'string' ? p.text : '', timestamp, true);
+        if (raw.type === 'response_item' && p.role === 'user') user(strings(p.content).join('\n'), timestamp, true);
         if (p.type === 'agent_reasoning') thought(p.text, timestamp);
         if (raw.type === 'response_item' && (p.channel === 'analysis' || p.type === 'reasoning')) thought(p.content ?? p.summary, timestamp);
         if (p.type === 'function_call' || p.type === 'custom_tool_call') call(p.call_id, p.name, p.arguments ?? p.input, timestamp);

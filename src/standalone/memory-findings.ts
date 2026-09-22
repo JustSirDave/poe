@@ -7,6 +7,17 @@ import type { Evidence, Finding } from './analysis';
 interface Preference { session: Session; requestId: string; timestamp: number; action: string; negative: boolean; text: string }
 const digest = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 20);
 
+/** Matches one of the trigger phrasings only when it opens the given clause. */
+function extractPreference(line: string): { negative: boolean; action: string } | null {
+  let match = line.match(/^(?:please\s+)?(always|never)\s+(.{4,240})$/i);
+  let negative = match?.[1].toLowerCase() === 'never'; let action = match?.[2];
+  if (!match) { match = line.match(/^I want you to\s+(always|never)\s+(.{4,240})$/i); negative = match?.[1].toLowerCase() === 'never'; action = match?.[2]; }
+  if (!match) { match = line.match(/^I prefer\s+(not\s+to\s+)?(.{4,240})$/i); negative = !!match?.[1]; action = match?.[2]; }
+  if (!match) { match = line.match(/^(?:please\s+)?remember(?:\s+that)?\s+(.{4,240})$/i); negative = /^(?:do not|don't|never)\b/i.test(match?.[1] || ''); action = match?.[1]?.replace(/^(?:do not|don't|never)\s+/i, ''); }
+  if (!match) { match = line.match(/^from now on[,]?\s+(.{4,240})$/i); negative = /^(?:do not|don't|never)\b/i.test(match?.[1] || ''); action = match?.[1]?.replace(/^(?:do not|don't|never)\s+/i, ''); }
+  return action ? { negative, action } : null;
+}
+
 function preferences(sessions: Session[], historyCutoff: number, now: number): Preference[] {
   const result: Preference[] = [];
   for (const session of sessions) {
@@ -17,13 +28,13 @@ function preferences(sessions: Session[], historyCutoff: number, now: number): P
       if (text.trimStart().startsWith('<')) continue;
       for (const raw of text.split(/\r?\n|(?<=[.!?])\s+/).slice(0, 100)) {
         const line = raw.replace(/^[\s>*_#\d.)-]+/, '').replace(/[\s.!]+$/, '').trim();
-        let match = line.match(/^(?:please\s+)?(always|never)\s+(.{4,240})$/i);
-        let negative = match?.[1].toLowerCase() === 'never'; let action = match?.[2];
-        if (!match) { match = line.match(/^I want you to\s+(always|never)\s+(.{4,240})$/i); negative = match?.[1].toLowerCase() === 'never'; action = match?.[2]; }
-        if (!match) { match = line.match(/^I prefer\s+(not\s+to\s+)?(.{4,240})$/i); negative = !!match?.[1]; action = match?.[2]; }
-        if (!match) { match = line.match(/^(?:please\s+)?remember(?:\s+that)?\s+(.{4,240})$/i); negative = /^(?:do not|don't|never)\b/i.test(match?.[1] || ''); action = match?.[1]?.replace(/^(?:do not|don't|never)\s+/i, ''); }
-        if (!match) { match = line.match(/^from now on[,]?\s+(.{4,240})$/i); negative = /^(?:do not|don't|never)\b/i.test(match?.[1] || ''); action = match?.[1]?.replace(/^(?:do not|don't|never)\s+/i, ''); }
-        if (!action) continue;
+        // A trigger phrase may open the sentence, or a later clause after a connector
+        // ("...and remember to always test edge cases too."); try the whole line first,
+        // then only the tail clause, so full-sentence context is kept whenever possible.
+        const clause = line.replace(/^.*?[,;]\s*(?:and\s+|but\s+|so\s+|also\s+)?/i, '');
+        const found = extractPreference(line) || (clause !== line && clause.length >= 4 ? extractPreference(clause) : null);
+        if (!found) continue;
+        const { negative, action } = found;
         const normalized = action.toLowerCase().replaceAll(/\b(?:please|kindly)\b/g, '').replaceAll(/[^a-z0-9]+/g, ' ').trim();
         if (normalized.length < 4) continue;
         result.push({ session, requestId: request.requestId, timestamp: request.timestamp, action: normalized, negative, text: line });

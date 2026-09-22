@@ -1,4 +1,5 @@
 // cspell:ignore describedby
+import { harnessClass, harnessLabel, harnessMark, harnessSortRank, sourceHarnessNames, sourceLabel } from '../core/sources';
 import type { CoachReport, Finding } from './analysis';
 import type { ReviewEvent } from './reviews';
 import { IDEA_COPY, projectName, reviewPrompt } from './presentation';
@@ -136,10 +137,9 @@ function emptyState(title: string, description: string): HTMLElement {
   const node = element('div', '', 'empty'); node.append(element('h2', title), element('p', description)); return node;
 }
 const compact = (value: number) => Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
-const assistantName = (name: string) => name.toLowerCase() === 'claude' ? 'Claude Code' : name;
-const ASSISTANT_ORDER = ['Claude', 'Codex', 'VS Code Copilot', 'GitHub Copilot CLI', 'GitHub Copilot App'];
-const assistantClass = (name: string) => name === 'Claude' ? 'claude' : name === 'Codex' ? 'codex' : name === 'VS Code Copilot' ? 'vscode' : 'copilot';
-const assistantMark = (name: string) => name === 'Claude' ? 'C' : name === 'Codex' ? 'Cdx' : name === 'VS Code Copilot' ? 'VS' : 'GH';
+const assistantName = harnessLabel;
+const assistantClass = harnessClass;
+const assistantMark = harnessMark;
 function localDateKey(timestamp = Date.now()): string {
   const date = new Date(timestamp); const pad = (value: number) => String(value).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -179,7 +179,7 @@ function renderUsageChart(points: ReturnType<typeof usagePoints>): void {
   }
   const labelDates = dates.filter((_, index) => index === 0 || index === dates.length - 1 || index % Math.max(1, Math.floor(dates.length / 4)) === 0).slice(0, 6);
   for (const date of labelDates) { const label = svgNode('text', { x: String(x(date)), y: String(height - 13), class: 'chart-axis', 'text-anchor': 'middle' }); label.textContent = new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); svg.append(label); }
-  const harnesses = [...new Set(points.map(point => point.harness))].sort((a, b) => (ASSISTANT_ORDER.indexOf(a) + 1 || 99) - (ASSISTANT_ORDER.indexOf(b) + 1 || 99));
+  const harnesses = [...new Set(points.map(point => point.harness))].sort((a, b) => harnessSortRank(a) - harnessSortRank(b));
   const legend = get('chart-legend'); legend.replaceChildren();
   for (const harness of harnesses) {
     const className = assistantClass(harness); const item = element('span', assistantName(harness), className); item.prepend(element('i')); legend.append(item);
@@ -202,7 +202,7 @@ function summarizeAssistants(points: CoachReport['usageHistory']['days']): Assis
   return names.map(name => {
     const rows = points.filter(point => point.harness === name);
     return { name, sessions: rows.reduce((sum, point) => sum + point.sessions, 0), turns: rows.reduce((sum, point) => sum + point.turns, 0), input: rows.reduce((sum, point) => sum + point.input, 0), output: rows.reduce((sum, point) => sum + point.output, 0) };
-  }).sort((a, b) => b.turns - a.turns || (ASSISTANT_ORDER.indexOf(a.name) + 1 || 99) - (ASSISTANT_ORDER.indexOf(b.name) + 1 || 99));
+  }).sort((a, b) => b.turns - a.turns || harnessSortRank(a.name) - harnessSortRank(b.name));
 }
 function assistantIdentity(name: string): HTMLElement {
   const identity = element('div', '', 'chart-assistant'); identity.append(element('span', assistantMark(name), 'assistant-mark'), element('strong', assistantName(name))); return identity;
@@ -251,7 +251,7 @@ function renderUsage(): void {
   const dates = points.map(point => point.date).sort(); text('usage-chart-summary', dates.length ? `${dates[0]} to ${dates.at(-1)} · recorded fields only` : 'No records in this range');
   renderUsageChart(points);
   const breakdown = get('usage-breakdown'); breakdown.replaceChildren();
-  const names = Object.keys(snapshot.report.usageHistory.byHarness).sort((a, b) => (ASSISTANT_ORDER.indexOf(a) + 1 || 99) - (ASSISTANT_ORDER.indexOf(b) + 1 || 99));
+  const names = Object.keys(snapshot.report.usageHistory.byHarness).sort((a, b) => harnessSortRank(a) - harnessSortRank(b));
   for (const name of names) {
     const rows = points.filter(point => point.harness === name); const row = element('article', '', `usage-breakdown-row ${assistantClass(name)}`);
     const total = rows.reduce((sum, point) => sum + point.input + point.output, 0); const rowInput = rows.reduce((sum, point) => sum + point.input, 0); const rowCache = rows.reduce((sum, point) => sum + point.cacheRead, 0); const rowTurns = rows.reduce((sum, point) => sum + point.turns, 0); const known = rows.reduce((sum, point) => sum + Math.max(point.turnsWithInput, point.turnsWithOutput), 0);
@@ -299,7 +299,7 @@ function renderHistory(): void {
     const row = element('article', '', 'history-row'); const copy = element('div', '', 'row-copy');
     copy.append(element('strong', finding ? findingTitle(finding) : 'Previously reviewed idea'), element('p', `${event.action === 'dismissed' ? 'Dismissed' : 'Reopened'}${event.reason ? ' · ' + ({ useful: 'Useful — reviewed', expected: 'Expected behavior', incorrect: 'Incorrect suggestion', 'not-now': 'Not now' }[event.reason]) : ''} · ${new Date(event.at).toLocaleString()}`));
     row.append(icon(event.action === 'dismissed' ? 'check' : 'history'), copy);
-    if (latest && event.action === 'dismissed') row.append(action('Reopen idea', async () => { await post('/api/review', { id: event.id, action: 'reopened' }); await load(true); notify(finding ? 'Idea reopened. Find it in Opportunities.' : 'Decision reopened. The idea will appear if it is detected again.'); }));
+    if (latest && event.action === 'dismissed') row.append(action('Reopen idea', async () => { await post('/api/review', { id: event.id, action: 'reopened' }); await load(true); notify(finding ? 'Idea reopened. Find it in Findings.' : 'Decision reopened. The idea will appear if it is detected again.'); }));
     list.append(row);
   }
   if (!snapshot?.history.length) list.append(emptyState('A fresh start', 'Your review decisions will appear here. Dismiss an idea from its review panel when it is not useful to you.'));
@@ -309,9 +309,7 @@ function renderSources(): void {
   const list = get('source-list'); list.replaceChildren();
   for (const source of report.sources) {
     const row = element('article', '', 'source-row'); const copy = element('div', '', 'source-copy');
-    const labels: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', vscode: 'VS Code Copilot', copilot: 'GitHub Copilot CLI' };
-    const harnesses: Record<string, string[]> = { claude: ['Claude'], codex: ['Codex'], vscode: ['VS Code Copilot'], copilot: ['GitHub Copilot CLI', 'GitHub Copilot App'] };
-    const label = labels[source.harness] || source.harness; const activity = harnesses[source.harness]?.map(name => report.usageHistory.byHarness[name]).find(Boolean);
+    const label = sourceLabel(source.harness); const activity = sourceHarnessNames(source.harness).map(name => report.usageHistory.byHarness[name]).find(Boolean);
     copy.append(element('strong', label), element('code', source.root));
     if (activity) copy.append(element('p', `${activity.sessions.toLocaleString()} sessions · ${activity.turns.toLocaleString()} turns · ${activityAge(activity.lastActivity)}`, 'source-activity'));
     row.append(icon('sources'), copy, element('span', source.exists ? 'Available' : 'Folder not found', 'source-status')); list.append(row);
@@ -325,7 +323,7 @@ function render(): void { renderMetrics(); renderOverviewAnalysis(); renderUsage
 const PAGES: Record<string, [string, string, string]> = {
   overview: ['Overview', 'Your workflow, at a glance.', 'See what repeats. Choose what to improve.'],
   usage: ['Token usage', 'See how your AI usage changes.', 'Compare recorded activity across your coding assistants.'],
-  findings: ['Opportunities', 'Find your next improvement.', 'Review a pattern, check the examples, then decide what to try.'],
+  findings: ['Findings', 'Find your next improvement.', 'Review a pattern, check the examples, then decide what to try.'],
   history: ['Review history', 'Your decisions, in one place.', 'Keep a record of the ideas you have reviewed.'],
   sources: ['Connected sources', 'Connected to the way you work.', 'A transparent view of what Poe can observe.'],
 };

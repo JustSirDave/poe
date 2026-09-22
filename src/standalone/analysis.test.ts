@@ -35,9 +35,15 @@ describe('efficiency candidates', () => {
     const sessions = ['a', 'b', 'c'].map(id => session(id, 'hello'));
     for (const s of sessions) { s.requests[0].promptTokens = 0; s.requests[0].completionTokens = 100; s.requests[0].responseLength = 15000; s.requests[0].longestAssistantMessage = 15000; }
     const report = analyzeEfficiency(sessions, config, now);
-    expect(report.recordedTokens).toEqual({ input: 0, output: 300, turnsWithInput: 3, turnsWithOutput: 3 });
+    expect(report.recordedTokens).toEqual({ input: 0, output: 300, cacheRead: 0, cacheWrite: 0, turnsWithInput: 3, turnsWithOutput: 3 });
     expect(report.findings[0].kind).toBe('output');
     expect(report.findings[0].caution).toContain('not measured token waste');
+  });
+  it('breaks out cache read/write tokens separately from the blended input total', () => {
+    const s = session('a', 'hello');
+    s.requests[0].promptTokens = 2000; s.requests[0].cacheReadTokens = 1800; s.requests[0].cacheWriteTokens = 150;
+    const report = analyzeEfficiency([s], config, now);
+    expect(report.recordedTokens).toMatchObject({ input: 2000, cacheRead: 1800, cacheWrite: 150 });
   });
   it('rejects unknown config fields and dangerous resource settings', () => {
     expect(() => resolveConfig({ refreshSeconds: 0 }, process.cwd())).toThrow();
@@ -87,6 +93,12 @@ it('keeps historical usage separate from the five-day coaching window', () => {
   expect(report.requestCount).toBe(1);
   expect(report.usageHistory.byHarness.Claude).toMatchObject({ sessions: 1, turns: 1, input: 400, output: 80, cacheRead: 300, cacheWrite: 20 });
   expect(report.usageHistory.byHarness.Codex).toMatchObject({ sessions: 1, turns: 1, input: 120, output: 30 });
+  // Reused Session objects (an unchanged log file on the next refresh) should reuse cached
+  // per-session usage rather than double-count it on a repeat call with the same references.
+  const again = analyzeEfficiency([recent, older], config, now);
+  expect(again.usageHistory.byHarness.Claude).toMatchObject({ sessions: 1, turns: 1, input: 400, output: 80, cacheRead: 300, cacheWrite: 20 });
+  expect(again.usageHistory.byHarness.Codex).toMatchObject({ sessions: 1, turns: 1, input: 120, output: 30 });
+  expect(again.usageHistory.days).toEqual(report.usageHistory.days);
   expect(report.usageHistory.days).toHaveLength(2);
   const date = new Date(now - 30 * 86400000); const pad = (value: number) => String(value).padStart(2, '0');
   expect(report.usageHistory.days[0].date).toBe(`${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`);

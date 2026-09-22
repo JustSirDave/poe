@@ -1,14 +1,9 @@
 import { createHash } from 'node:crypto';
 import { redactSecrets } from './redact-secrets';
+import { harnessCounterScope, type CounterScope } from './sources';
 import type { ModelUsage, Session, SessionRequest } from './types';
 
-export type TokenCounterScope =
-  | 'turn-delta'
-  | 'turn-aggregate'
-  | 'last-agentic-round'
-  | 'session-total'
-  | 'unavailable'
-  | 'unknown';
+export type TokenCounterScope = CounterScope;
 
 export interface AnalysisTokenUsage {
   input: number | null;
@@ -116,12 +111,7 @@ const digest = (value: string): string => createHash('sha256').update(value).dig
 const preview = (value: string): string => redactSecrets(value).trim().replaceAll(/\s+/g, ' ').slice(0, 240);
 
 function counterScopes(harness: string): Pick<AnalysisTokenUsage, 'inputScope' | 'outputScope'> {
-  const normalized = harness.toLowerCase();
-  if (normalized === 'codex') return { inputScope: 'turn-delta', outputScope: 'turn-delta' };
-  if (normalized === 'claude') return { inputScope: 'turn-aggregate', outputScope: 'turn-aggregate' };
-  if (normalized.includes('vs code')) return { inputScope: 'last-agentic-round', outputScope: 'turn-aggregate' };
-  if (normalized.includes('copilot')) return { inputScope: 'unavailable', outputScope: 'turn-aggregate' };
-  return { inputScope: 'unknown', outputScope: 'unknown' };
+  return harnessCounterScope(harness);
 }
 
 function sessionKey(session: Session): string {

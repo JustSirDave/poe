@@ -30,4 +30,11 @@ describe('memory coaching', () => {
   it('ignores ordinary task instructions and never needs project documents', () => {
     expect(memoryFindings([session('a', 'Fix this bug and do not assume the cause.'), session('b', 'Fix this bug and do not assume the cause.')], cutoff, now, config)).toEqual([]);
   });
+
+  it('still catches a trigger phrase that opens a later clause, not just the sentence', () => {
+    const text = 'Optimize this function, and remember to always keep responses concise.';
+    const findings = memoryFindings([session('a', text), session('b', text)], cutoff, now, config);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].title).toBe('Repeated preference may belong in memory');
+  });
 });

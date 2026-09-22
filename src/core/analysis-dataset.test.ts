@@ -36,7 +36,7 @@ describe('analysis dataset', () => {
     const sources = [
       ['Claude', 'turn-aggregate', 'turn-aggregate'],
       ['VS Code Copilot', 'last-agentic-round', 'turn-aggregate'],
-      ['Copilot CLI', 'unavailable', 'turn-aggregate'],
+      ['GitHub Copilot CLI', 'unavailable', 'turn-aggregate'],
       ['Other', 'unknown', 'unknown'],
     ] as const;
     const sessions = sources.map(([harness], index) => createSession({

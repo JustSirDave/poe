@@ -84,6 +84,14 @@ describe('within-session signals', () => {
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({ occurrences: 4, sessionCount: 2 });
   });
+  it('caps merged evidence even when a matching finding recurs across many sessions', () => {
+    const fixtures = ['one', 'two', 'three', 'four', 'five'].map(id => { const f = fixture('claude'); f.session.sessionId = id; return f; });
+    for (const target of fixtures) for (const id of ['a', 'b']) { target.call(id, 'Glob', { pattern: '**/*' }); target.result(id, true); }
+    const findings = sessionFindings(fixtures.map(f => f.parser.snapshot()!), now - 5 * 86400000, now);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ occurrences: 10, sessionCount: 5 });
+    expect(findings[0].evidence.length).toBeLessThanOrEqual(3);
+  });
   it('recognizes a user correction without claiming a violation and expires old events', () => {
     const f = fixture(); f.session.requests[0].messageText = 'You ignored my instruction to preserve the tests.';
     expect(f.findings()[0].explanation).toContain('not automatic proof');

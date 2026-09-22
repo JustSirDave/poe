@@ -57,7 +57,7 @@ export interface CoachReport {
   reasoningSignalCoverage?: { retained: number; dropped: number; previews: boolean };
   requestCount: number;
   harnesses: Record<string, number>;
-  recordedTokens: { input: number; output: number; turnsWithInput: number; turnsWithOutput: number };
+  recordedTokens: { input: number; output: number; cacheRead: number; cacheWrite: number; turnsWithInput: number; turnsWithOutput: number };
   usageHistory: { firstActivity?: number; lastActivity?: number; days: TokenUsagePoint[]; byHarness: Record<string, HarnessActivity> };
   findings: Finding[];
   sources: { harness: string; root: string; exists: boolean }[];
@@ -70,6 +70,45 @@ function localDateKey(timestamp: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+type UsagePoint = { date: string; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number; turnsWithInput: number; turnsWithOutput: number };
+interface SessionUsage {
+  firstActivity?: number; lastActivity?: number;
+  summary: { turns: number; input: number; output: number; cacheRead: number; cacheWrite: number; turnsWithInput: number; turnsWithOutput: number };
+  points: Map<string, UsagePoint>;
+}
+// Reused Session objects (unchanged log files) are the same object reference across scans
+// (see efficiency-scan.ts's cache), so per-session token aggregation can be computed once and
+// reused instead of re-walking every request on each refresh. A session's timestamps never
+// change once parsed, so a cached entry stays valid for the life of that Session object; the
+// rare exception is a request whose timestamp exceeds `now` at first-cache time (clock skew),
+// which then stays excluded until the underlying file changes and the session is reparsed.
+const sessionUsageCache = new WeakMap<Session, SessionUsage>();
+function computeSessionUsage(session: Session, now: number): SessionUsage {
+  const summary = { turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0 };
+  const points = new Map<string, UsagePoint>();
+  let firstActivity: number | undefined;
+  let lastActivity: number | undefined;
+  for (const request of session.requests) {
+    const timestamp = request.timestamp;
+    if (timestamp === null || timestamp > now) continue;
+    firstActivity = firstActivity === undefined ? timestamp : Math.min(firstActivity, timestamp);
+    lastActivity = lastActivity === undefined ? timestamp : Math.max(lastActivity, timestamp);
+    summary.turns++;
+    if (request.promptTokens !== null && Number.isFinite(request.promptTokens) && request.promptTokens >= 0) { summary.input += request.promptTokens; summary.turnsWithInput++; }
+    if (request.completionTokens !== null && Number.isFinite(request.completionTokens) && request.completionTokens >= 0) { summary.output += request.completionTokens; summary.turnsWithOutput++; }
+    if (request.cacheReadTokens !== null && Number.isFinite(request.cacheReadTokens) && request.cacheReadTokens >= 0) summary.cacheRead += request.cacheReadTokens;
+    if (request.cacheWriteTokens !== null && Number.isFinite(request.cacheWriteTokens) && request.cacheWriteTokens >= 0) summary.cacheWrite += request.cacheWriteTokens;
+    const date = localDateKey(timestamp);
+    const point = points.get(date) || { date, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0 };
+    point.turns++;
+    if (request.promptTokens !== null && Number.isFinite(request.promptTokens) && request.promptTokens >= 0) { point.input += request.promptTokens; point.turnsWithInput++; }
+    if (request.completionTokens !== null && Number.isFinite(request.completionTokens) && request.completionTokens >= 0) { point.output += request.completionTokens; point.turnsWithOutput++; }
+    if (request.cacheReadTokens !== null && Number.isFinite(request.cacheReadTokens) && request.cacheReadTokens >= 0) point.cacheRead += request.cacheReadTokens;
+    if (request.cacheWriteTokens !== null && Number.isFinite(request.cacheWriteTokens) && request.cacheWriteTokens >= 0) point.cacheWrite += request.cacheWriteTokens;
+    points.set(date, point);
+  }
+  return { firstActivity, lastActivity, summary, points };
+}
 function usageHistory(sessions: Session[], now: number): CoachReport['usageHistory'] {
   type MutablePoint = TokenUsagePoint & { sessionIds: Set<string> };
   const points = new Map<string, MutablePoint>();
@@ -83,26 +122,22 @@ function usageHistory(sessions: Session[], now: number): CoachReport['usageHisto
     const seen = harnessSessions.get(session.harness) || new Set<string>();
     seen.add(sessionKey); harnessSessions.set(session.harness, seen);
     const summary = byHarness[session.harness] ||= { sessions: 0, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0 };
-    for (const request of session.requests) {
-      const timestamp = request.timestamp;
-      if (timestamp === null || timestamp > now) continue;
-      firstActivity = firstActivity === undefined ? timestamp : Math.min(firstActivity, timestamp);
-      lastActivity = lastActivity === undefined ? timestamp : Math.max(lastActivity, timestamp);
-      summary.firstActivity = summary.firstActivity === undefined ? timestamp : Math.min(summary.firstActivity, timestamp);
-      summary.lastActivity = summary.lastActivity === undefined ? timestamp : Math.max(summary.lastActivity, timestamp);
-      summary.turns++;
-      if (request.promptTokens !== null && Number.isFinite(request.promptTokens) && request.promptTokens >= 0) { summary.input += request.promptTokens; summary.turnsWithInput++; }
-      if (request.completionTokens !== null && Number.isFinite(request.completionTokens) && request.completionTokens >= 0) { summary.output += request.completionTokens; summary.turnsWithOutput++; }
-      if (request.cacheReadTokens !== null && Number.isFinite(request.cacheReadTokens) && request.cacheReadTokens >= 0) summary.cacheRead += request.cacheReadTokens;
-      if (request.cacheWriteTokens !== null && Number.isFinite(request.cacheWriteTokens) && request.cacheWriteTokens >= 0) summary.cacheWrite += request.cacheWriteTokens;
-      const date = localDateKey(timestamp);
-      const key = `${date}:${session.harness}`;
-      const point = points.get(key) || { date, harness: session.harness, sessions: 0, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0, sessionIds: new Set<string>() };
-      point.turns++; point.sessionIds.add(sessionKey);
-      if (request.promptTokens !== null && Number.isFinite(request.promptTokens) && request.promptTokens >= 0) { point.input += request.promptTokens; point.turnsWithInput++; }
-      if (request.completionTokens !== null && Number.isFinite(request.completionTokens) && request.completionTokens >= 0) { point.output += request.completionTokens; point.turnsWithOutput++; }
-      if (request.cacheReadTokens !== null && Number.isFinite(request.cacheReadTokens) && request.cacheReadTokens >= 0) point.cacheRead += request.cacheReadTokens;
-      if (request.cacheWriteTokens !== null && Number.isFinite(request.cacheWriteTokens) && request.cacheWriteTokens >= 0) point.cacheWrite += request.cacheWriteTokens;
+    let usage = sessionUsageCache.get(session);
+    if (!usage) { usage = computeSessionUsage(session, now); sessionUsageCache.set(session, usage); }
+    if (usage.firstActivity !== undefined) firstActivity = firstActivity === undefined ? usage.firstActivity : Math.min(firstActivity, usage.firstActivity);
+    if (usage.lastActivity !== undefined) lastActivity = lastActivity === undefined ? usage.lastActivity : Math.max(lastActivity, usage.lastActivity);
+    if (usage.firstActivity !== undefined) summary.firstActivity = summary.firstActivity === undefined ? usage.firstActivity : Math.min(summary.firstActivity, usage.firstActivity);
+    if (usage.lastActivity !== undefined) summary.lastActivity = summary.lastActivity === undefined ? usage.lastActivity : Math.max(summary.lastActivity, usage.lastActivity);
+    summary.turns += usage.summary.turns; summary.input += usage.summary.input; summary.output += usage.summary.output;
+    summary.cacheRead += usage.summary.cacheRead; summary.cacheWrite += usage.summary.cacheWrite;
+    summary.turnsWithInput += usage.summary.turnsWithInput; summary.turnsWithOutput += usage.summary.turnsWithOutput;
+    for (const day of usage.points.values()) {
+      const key = `${day.date}:${session.harness}`;
+      const point = points.get(key) || { date: day.date, harness: session.harness, sessions: 0, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0, sessionIds: new Set<string>() };
+      point.turns += day.turns; point.input += day.input; point.output += day.output;
+      point.cacheRead += day.cacheRead; point.cacheWrite += day.cacheWrite;
+      point.turnsWithInput += day.turnsWithInput; point.turnsWithOutput += day.turnsWithOutput;
+      point.sessionIds.add(sessionKey);
       points.set(key, point);
     }
   }
@@ -156,13 +191,18 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
   const large: Turn[] = [];
   const concise: Turn[] = [];
   const responseReview = { requestedDetail: 0, unclassified: 0, brevityConflict: 0 };
-  const tokens = { input: 0, output: 0, turnsWithInput: 0, turnsWithOutput: 0 };
+  const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0 };
   const harnesses: Record<string, number> = {};
   for (const turn of turns) {
     const r = turn.request;
     harnesses[turn.session.harness] = (harnesses[turn.session.harness] || 0) + 1;
+    // Note: input already folds cache reads/writes in for harnesses whose promptTokens is
+    // turn-aggregate scoped (see counterScopes in analysis-dataset.ts); cacheRead/cacheWrite
+    // below are the same underlying numbers broken out for display, not an additional amount.
     if (r.promptTokens !== null && Number.isFinite(r.promptTokens) && r.promptTokens >= 0) { tokens.input += r.promptTokens; tokens.turnsWithInput++; }
     if (r.completionTokens !== null && Number.isFinite(r.completionTokens) && r.completionTokens >= 0) { tokens.output += r.completionTokens; tokens.turnsWithOutput++; }
+    if (r.cacheReadTokens !== null && Number.isFinite(r.cacheReadTokens) && r.cacheReadTokens >= 0) tokens.cacheRead += r.cacheReadTokens;
+    if (r.cacheWriteTokens !== null && Number.isFinite(r.cacheWriteTokens) && r.cacheWriteTokens >= 0) tokens.cacheWrite += r.cacheWriteTokens;
     const message = r.messageText.trim().replaceAll(/\s+/g, ' ');
     // Exact normalized repetitions avoid merging prompts whose constraints differ.
     // Exclude truncated messages and obvious injected context.
