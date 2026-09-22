@@ -30,6 +30,7 @@ import {
   createRuleFromMarkdown,
   updateRuleThresholds,
 } from './rule-engine';
+import type { TrustGate } from './rule-trust';
 import {
   registerAllBuiltinRules,
   registerAllBuiltinMetrics,
@@ -42,16 +43,20 @@ import {
 import { runDetectors, runEmitters } from './detector-registry';
 
 export const RuleEngine = {
-  /** Load built-in rules + metrics + personal rules. Safe to call multiple times. */
-  init(): void {
+  /**
+   * Load built-in rules + metrics + personal rules. Safe to call multiple times.
+   * Personal rules are untrusted-until-approved (TOFU) -- pass the caller's trustGate
+   * explicitly rather than relying on a module-level default having been set elsewhere.
+   */
+  init(trustGate?: TrustGate): void {
     registerAllBuiltinRules();
     registerAllBuiltinMetrics();
-    loadPersonalRules();
+    loadPersonalRules(trustGate);
   },
 
-  /** Load project-level rules for the given workspace root. */
-  loadProject(workspaceRoot: string): void {
-    loadProjectRules(workspaceRoot);
+  /** Load project-level rules for the given workspace root. Also untrusted-until-approved. */
+  loadProject(workspaceRoot: string, trustGate?: TrustGate): void {
+    loadProjectRules(workspaceRoot, trustGate);
   },
 
   /** Return all active rules (built-in + personal + project, merged). */

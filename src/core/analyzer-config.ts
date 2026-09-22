@@ -333,13 +333,14 @@ export class ConfigAnalyzer extends AnalyzerBase {
     const sessions = this.filteredSessions(f);
     const result: Record<string, ContextProvisionScore> = {};
 
+    const reqSet = new Set(reqs);
     const byHarness = new Map<string, typeof reqs>();
     const sessionsByHarness = new Map<string, typeof sessions>();
     for (const s of sessions) {
       const h = s.harness;
       if (!byHarness.has(h)) { byHarness.set(h, []); sessionsByHarness.set(h, []); }
       sessionsByHarness.get(h)!.push(s);
-      byHarness.get(h)!.push(...s.requests.filter(r => reqs.includes(r)));
+      byHarness.get(h)!.push(...s.requests.filter(r => reqSet.has(r)));
     }
 
     for (const [harness, hReqs] of byHarness) {
