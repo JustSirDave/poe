@@ -24,11 +24,19 @@ beforeAll(() => {
 });
 
 describe('webview DOM smoke (jsdom)', () => {
-  it('el() creates a DOM node with class and innerHTML', async () => {
+  it('el() creates a DOM node with class and escapes a plain string content argument', async () => {
     const { el } = await import('./shared');
     const node = el('div', 'my-class', '<span>hi</span>');
     expect(node.tagName).toBe('DIV');
     expect(node.className).toBe('my-class');
+    // A plain string is text, not raw HTML -- it must not create a real <span> child.
+    expect(node.querySelector('span')).toBeNull();
+    expect(node.textContent).toBe('<span>hi</span>');
+  });
+
+  it('el() accepts a rawHtml() wrapper to opt into raw markup, same as html`` does', async () => {
+    const { el, rawHtml } = await import('./shared');
+    const node = el('div', 'my-class', rawHtml('<span>hi</span>'));
     expect(node.querySelector('span')?.textContent).toBe('hi');
   });
 

@@ -152,7 +152,10 @@ export function $$<T extends HTMLElement = HTMLElement>(sel: string): T[] {
 export function el(tag: string, cls?: string, content?: string | SafeHtml): HTMLElement {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
-  if (content) setHtml(e, typeof content === 'string' ? rawHtml(content) : content);
+  // A plain string is escaped text, matching every other helper in this module (`html`,
+  // `statCard`, ...) -- NOT raw HTML. Callers that genuinely need raw markup must wrap it
+  // with rawHtml() explicitly, the same way the `html` tagged template requires it.
+  if (content) setHtml(e, typeof content === 'string' ? rawHtml(escapeHtml(content)) : content);
   return e;
 }
 
