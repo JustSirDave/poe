@@ -1,4 +1,4 @@
-# Session Coach UI system
+# Poe UI system
 
 Applied UI UX Pro Max guidance, September 2026. Runtime: native DOM TypeScript and CSS, bundled with esbuild. No framework migration or remote font requests.
 

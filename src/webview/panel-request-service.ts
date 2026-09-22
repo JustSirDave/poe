@@ -28,7 +28,7 @@ import {
 import { getCatalogItems } from './panel-catalog';
 import { readTextWithByteLimit } from './fetch-utils';
 import { validateDateFilter } from './panel-rpc';
-import { isNumber, isOptionalString, isRecord, isString, postError, postEvent, postResponse, RequestMessage, safeJoinUnder } from './panel-shared';
+import { isNumber, isOptionalString, isRecord, isSafeExternalHttpsUrl, isString, postError, postEvent, postResponse, RequestMessage, safeJoinUnder } from './panel-shared';
 
 type CustomPanelMethodName =
   | 'createSkill'
@@ -569,7 +569,7 @@ ${UNTRUSTED_DATA_GUARD}`;
       );
       const resources = Array.isArray(response) ? response as unknown as typeof response['items'] : response.items ?? [];
       const validated = resources
-        .filter(resource => typeof resource.title === 'string' && typeof resource.url === 'string' && resource.url.startsWith('https://'))
+        .filter(resource => typeof resource.title === 'string' && isSafeExternalHttpsUrl(resource.url))
         .slice(0, 6)
         .map(resource => ({ title: resource.title, url: resource.url, type: String(resource.type || 'Resource'), reason: String(resource.reason || '') }));
 

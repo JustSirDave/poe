@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { z } from 'zod';
 import { CoachService } from './service';
 import { ReviewStore } from './reviews';
+import { createMcpHandler } from './mcp';
 
 function respond(res: ServerResponse, code: number, body: unknown): void {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -15,7 +16,7 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []; let size = 0;
   for await (const chunk of req) {
     const bytes = chunk as Buffer; size += bytes.length;
-    if (size > 4096) throw new Error('Request too large');
+    if (size > 65536) throw new Error('Request too large');
     chunks.push(bytes);
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
@@ -23,6 +24,7 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 
 export async function startDashboard(service: CoachService): Promise<{ url: string; close: () => Promise<void> }> {
   const reviews = new ReviewStore(service.config.stateDir);
+  const mcp = createMcpHandler(service);
   await reviews.load();
   let origin = '';
   const server = createServer((req, res) => { void handle(req, res).catch(() => respond(res, 400, { error: 'Request failed' })); });
@@ -46,6 +48,12 @@ export async function startDashboard(service: CoachService): Promise<{ url: stri
       const input = z.object({ id: z.string().regex(/^[a-f0-9]{20}$/), action: z.enum(['dismissed', 'reopened']), reason: z.enum(['useful', 'expected', 'incorrect', 'not-now']).optional() }).strict().parse(await readBody(req));
       if (!service.report?.findings.some(f => f.id === input.id) && !reviews.history().some(e => e.id === input.id)) { respond(res, 404, { error: 'Unknown finding' }); return; }
       await reviews.record({ ...input, at: new Date().toISOString() }); respond(res, 200, { ok: true }); return;
+    }
+    if (req.method === 'POST' && req.headers['content-type'] === 'application/json' && route === '/api/mcp') {
+      const result = await mcp(await readBody(req));
+      if (result === undefined) { res.writeHead(204, { 'Cache-Control': 'no-store' }); res.end(); }
+      else respond(res, 200, result);
+      return;
     }
     const assets: Record<string, [string, string]> = { '/': ['dashboard.html', 'text/html'], '/dashboard.js': ['dashboard.js', 'application/javascript'], '/dashboard.css': ['dashboard.css', 'text/css'] };
     if (req.method === 'GET' && Object.hasOwn(assets, route)) {

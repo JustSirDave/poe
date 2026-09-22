@@ -21,6 +21,22 @@ import { compileFilter, compileTrigger, evaluateTemplate, evaluateExpression } f
 import { getAllRules } from './rule-engine';
 import { warnCore } from './log';
 
+/**
+ * Substitute `thresholds.<key>` references with their literal values. Uses a
+ * word-boundary match rather than a plain substring replace so a key that's a
+ * prefix of another (e.g. `minChars` and `minCharsStrict`) can't corrupt the
+ * longer key's token when the shorter one is substituted first.
+ */
+function resolveThresholdRefs(expr: string, thresholds?: Record<string, number>): string {
+  if (!thresholds) return expr;
+  let resolved = expr;
+  for (const [k, v] of Object.entries(thresholds)) {
+    const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    resolved = resolved.replace(new RegExp(`\\bthresholds\\.${escaped}\\b`, 'g'), String(v));
+  }
+  return resolved;
+}
+
 /* ================================================================== */
 /*  Pipeline Definition                                               */
 /* ================================================================== */
@@ -256,12 +272,7 @@ export function checkPipelineTrigger(
   }
 
   // Resolve threshold references in the check expression
-  let resolved = pipeline.checkExpr;
-  if (rule.thresholds) {
-    for (const [k, v] of Object.entries(rule.thresholds)) {
-      resolved = resolved.replaceAll(`thresholds.${k}`, String(v));
-    }
-  }
+  const resolved = resolveThresholdRefs(pipeline.checkExpr, rule.thresholds);
 
   try {
     const triggerFn = compileTrigger(resolved);
@@ -350,13 +361,8 @@ function compileFilterWithContext(
   ruleCtx: Record<string, unknown>,
 ): (row: Record<string, unknown>) => boolean {
   // Resolve thresholds.xxx references to literal values
-  let resolved = expr;
   const thresholds = ruleCtx.thresholds as Record<string, number> | undefined;
-  if (thresholds) {
-    for (const [k, v] of Object.entries(thresholds)) {
-      resolved = resolved.replaceAll(`thresholds.${k}`, String(v));
-    }
-  }
+  const resolved = resolveThresholdRefs(expr, thresholds);
 
   const filterFn = compileFilter(resolved);
   return (row: Record<string, unknown>) => {

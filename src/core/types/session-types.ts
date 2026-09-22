@@ -125,6 +125,8 @@ export type SessionEndReason = 'shutdown' | 'active' | 'aborted' | 'unknown';
 export interface Session {
   toolActivity?: import('../tool-activity').ToolActivity[];
   toolActivityDropped?: number;
+  reasoningActivity?: import('../tool-activity').ReasoningActivity[];
+  reasoningActivityDropped?: number;
   /** Recorded internal session origin, when available. */
   sessionOrigin?: string;
   sessionId: string;

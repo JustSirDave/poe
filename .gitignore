@@ -25,5 +25,7 @@ test-results/
 
 # Private standalone coach configuration and reports
 coach.local.json
+poe.local.json
 .coach-private/
+.poe-private/
 *.session.jsonl

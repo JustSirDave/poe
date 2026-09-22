@@ -10,7 +10,8 @@
  */
 
 import type { Analyzer } from '../core/analyzer';
-import type { DateFilter } from '../core/types';
+import type { DateFilter, Session } from '../core/types';
+import { toDateStr } from '../core/helpers';
 
 /* ---- helpers ---- */
 
@@ -414,6 +415,22 @@ export function formatHarnessComparison(analyzer: Analyzer, f?: DateFilter) {
   };
 }
 
+/** Mirrors AnalyzerBase's protected filteredSessions()/matchesWorkspaceFilter() matching,
+ *  which formatSessions can't call directly since getSessionDetail() takes no filter and
+ *  those methods aren't public on Analyzer. */
+function sessionMatchesFilter(session: Session, f?: DateFilter): boolean {
+  if (f?.workspaceId && session.workspaceId !== f.workspaceId && session.workspaceName !== f.workspaceId) return false;
+  if (f?.harness && session.harness !== f.harness) return false;
+  const ts = session.lastMessageDate || session.creationDate;
+  if (f?.fromDate || f?.toDate) {
+    if (ts == null || ts <= 0) return false;
+    const d = toDateStr(ts);
+    if (f.fromDate && d < f.fromDate) return false;
+    if (f.toDate && d > f.toDate) return false;
+  }
+  return true;
+}
+
 export function formatSessions(
   analyzer: Analyzer,
   params: { sessionId?: string; page?: number; pageSize?: number; search?: string },
@@ -422,6 +439,10 @@ export function formatSessions(
   if (params.sessionId) {
     const session = analyzer.getSessionDetail(params.sessionId);
     if (!session) return { error: 'Session not found' };
+    // A filter that was passed alongside sessionId scopes the lookup: a session outside it
+    // is reported the same way as one that doesn't exist, rather than silently ignoring
+    // the filter and returning full detail regardless.
+    if (!sessionMatchesFilter(session, f)) return { error: 'Session not found' };
     return {
       sessionId: session.sessionId,
       workspaceName: session.workspaceName,

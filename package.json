@@ -292,7 +292,8 @@
   },
   "scripts": {
     "build:coach": "node build-coach.mjs",
-    "coach": "node dist/coach.cjs",
+    "poe": "node dist/poe.cjs",
+    "coach": "node dist/poe.cjs",
     "vscode:prepublish": "npm run build",
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
@@ -302,7 +303,6 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "analyze:data-inventory": "npx tsx scripts/data-inventory.ts",
-    "analyze:token-inventory": "npx tsx scripts/token-inventory.ts --save",
     "analyze:context-composition": "npx tsx scripts/explore-context-composition.ts",
     "analyze:e2e-real-data": "npx tsx scripts/e2e-real-data.ts",
     "parity": "npx tsx scripts/parse-parity.ts",

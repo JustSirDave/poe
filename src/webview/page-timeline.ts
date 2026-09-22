@@ -257,13 +257,15 @@ export async function renderTimeline(container: HTMLElement, currentFilter: Date
     const pag = document.getElementById('pagination')!;
     if (totalPages > 1) {
       if (sessionsPage > 1) {
-        const prev = el('button', 'page-btn', '&larr; Prev');
+        // el()'s string argument is escaped text, not raw HTML -- use the literal glyph
+        // rather than an HTML entity, which would now render as literal "&larr;" text.
+        const prev = el('button', 'page-btn', '← Prev');
         prev.addEventListener('click', () => { sessionsPage--; void _renderListTab(); });
         pag.appendChild(prev);
       }
       pag.appendChild(el('span', 'page-info', `Page ${sessionsPage} of ${totalPages}`));
       if (sessionsPage < totalPages) {
-        const next = el('button', 'page-btn', 'Next &rarr;');
+        const next = el('button', 'page-btn', 'Next →');
         next.addEventListener('click', () => { sessionsPage++; void _renderListTab(); });
         pag.appendChild(next);
       }

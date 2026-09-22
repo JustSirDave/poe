@@ -27,10 +27,13 @@ const STRIPE_KEY = /\b[srp]k_(?:live|test)_[0-9A-Za-z]{10,255}\b/g;
 // Credentials embedded in a connection-string URI (scheme://user:pass@host).
 const CONNECTION_STRING_CREDS = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:[^\s@/]+@/gi;
 // Quoted assignment whose value may contain spaces: "password": "two words here".
-const QUOTED_SECRET_ASSIGNMENT = /\b(api[_-]?key|access[_-]?key|secret|token|password|passwd|credentials?)(["']?\s*[:=]\s*)(["'])((?:(?!\3).){4,512})\3/gi;
+// The leading boundary is a negative lookbehind, not \b, because \b treats '_' as a word
+// character and so never matches before the keyword in the most common real-world secret
+// env-var names (DATABASE_PASSWORD, AWS_SECRET_ACCESS_KEY, STRIPE_WEBHOOK_SECRET, ...).
+const QUOTED_SECRET_ASSIGNMENT = /(?<![A-Za-z0-9])(api[_-]?key|access[_-]?key|secret|token|password|passwd|credentials?)(["']?\s*[:=]\s*)(["'])((?:(?!\3).){4,512})\3/gi;
 const JWT = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
 const AUTH_HEADER = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{16,512}/gi;
-const KEY_VALUE_ASSIGNMENT = /\b(api[_-]?key|access[_-]?key|secret|token|password|passwd|credentials?)(["']?\s*[:=]\s*)(["']?)[^\s"'`;,]{8,512}\3/gi;
+const KEY_VALUE_ASSIGNMENT = /(?<![A-Za-z0-9])(api[_-]?key|access[_-]?key|secret|token|password|passwd|credentials?)(["']?\s*[:=]\s*)(["']?)[^\s"'`;,]{8,512}\3/gi;
 
 /** Mask credential-shaped substrings, keeping surrounding text intact. */
 export function redactSecrets(text: string): string {

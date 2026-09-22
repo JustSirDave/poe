@@ -212,7 +212,11 @@ function commitCodexEdit(state: CodexParseState, pending: PendingCodexEdit): voi
 }
 
 function flushCodexTurn(state: CodexParseState, defaultModel: string): void {
-  if (!state.currentUserMessage && state.currentAssistantTexts.length === 0) return;
+  // A turn with no user message and no assistant text can still have real recorded work
+  // (tool calls, edits, token usage) -- e.g. the session's first user_message was filtered
+  // out as harness-injected context. Use the same "did anything happen" definition as
+  // isTurnEmpty() rather than a narrower check that silently drops that work.
+  if (!state.currentUserMessage && state.currentAssistantTexts.length === 0 && isTurnEmpty(state)) return;
   state.pendingToolEdits.clear();
 
   const responseText = state.currentAssistantTexts.join('\n');
@@ -612,7 +616,6 @@ function findAllJsonlFiles(dir: string): string[] {
 }
 
 export function parseCodexSessionFile(filePath: string, editLocIndex?: EditLocIndex, trustedRoots?: string[]): Session | null {
-  assertTrustedPath(filePath, trustedRoots);
   const meta: CodexSessionMeta = {
     sessionId: path.basename(filePath, '.jsonl'),
     cwd: '',
@@ -624,6 +627,7 @@ export function parseCodexSessionFile(filePath: string, editLocIndex?: EditLocIn
   let parsedLineCount = 0;
 
   try {
+    assertTrustedPath(filePath, trustedRoots);
     readCodexJsonlStreaming(filePath, (line) => {
       parsedLineCount++;
       handleCodexLine(line, state, meta);
@@ -662,9 +666,9 @@ export function parseCodexSessionFile(filePath: string, editLocIndex?: EditLocIn
 }
 
 /** Retains finalized turns while only consuming new JSONL records. */
-export function createCodexAccumulator(filePath: string): import('./session-accumulator').SessionAccumulator {
+export function createCodexAccumulator(filePath: string, editLocIndex?: EditLocIndex): import('./session-accumulator').SessionAccumulator {
   const meta: CodexSessionMeta = { sessionId: path.basename(filePath, '.jsonl'), cwd: '', source: '', model: '' };
-  const live = createCodexState('');
+  const live = createCodexState('', editLocIndex);
   let cleaned = 0;
   return {
     append(raw) {
@@ -674,7 +678,11 @@ export function createCodexAccumulator(filePath: string): import('./session-accu
       while (cleaned < live.requests.length) live.requests[cleaned++].responseText = '';
     },
     snapshot() {
-      const state: CodexParseState = { ...live, requests: [...live.requests], pendingToolEdits: new Map(live.pendingToolEdits) };
+      // The copy's flush below previews the in-progress (not yet finalized) turn. It must
+      // not merge into the shared editLocIndex: mergeRequestEditLoc locks in whatever it's
+      // given for a requestId and ignores later calls, so an incomplete preview merge here
+      // would permanently undercount that request's lines once the turn actually finishes.
+      const state: CodexParseState = { ...live, requests: [...live.requests], pendingToolEdits: new Map(live.pendingToolEdits), editLocIndex: undefined };
       flushCodexTurn(state, meta.model);
       if (!state.requests.length) return null;
       for (const request of state.requests) request.responseText = '';

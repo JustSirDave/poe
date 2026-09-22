@@ -13,7 +13,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import { describe, it, expect } from 'vitest';
 import { EditLocIndex } from './edit-loc-diff';
-import { parseClaudeSessions } from './parser-claude';
+import { parseClaudeSessions, createClaudeAccumulator } from './parser-claude';
 
 /** os.tmpdir() on Windows often returns 8.3 short names (e.g. TAMASB~1)
  *  that don't match readdirSync output. Resolve to the long form so
@@ -205,6 +205,37 @@ describe('parseClaudeSessions', () => {
       const session = parseClaudeSessions(projectsDir)[0].sessions[0];
       expect(session.requests).toHaveLength(1);
       expect(session.requests[0].messageText).toContain('how does mcp work?');
+    });
+  });
+
+  it('records a tool edit whose confirming tool_result arrives on the same line as an interrupt', () => {
+    // Claude can pack the interrupt text and the pending tool's tool_result into the same
+    // user record's content array. The result must still be recorded before the scan for
+    // this turn's tool activity stops at that line.
+    withProjectsDir('s.jsonl', [
+      makeUser('edit a file', '2025-06-15T10:00:00Z', { uuid: 'request_interrupted_edit' }),
+      makeToolAssistant('Edit', {
+        file_path: '/Users/me/proj/app.ts',
+        old_string: 'old',
+        new_string: 'new',
+      }, '2025-06-15T10:00:01Z', 'tool-interrupted'),
+      {
+        type: 'user',
+        timestamp: '2025-06-15T10:00:02Z',
+        sessionId: 'sess-1',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'tool-interrupted', content: 'ok' },
+            { type: 'text', text: '[Request interrupted by user for tool use]' },
+          ],
+        },
+      },
+    ], (projectsDir) => {
+      const editLocIndex: EditLocIndex = new Map();
+      const request = parseClaudeSessions(projectsDir, editLocIndex)[0].sessions[0].requests[0];
+      expect(request.editedFiles).toEqual(['/Users/me/proj/app.ts']);
+      expect(editLocIndex.get('request_interrupted_edit')?.get('/Users/me/proj/app.ts')).toEqual({ added: 1, removed: 1 });
     });
   });
 
@@ -577,6 +608,24 @@ describe('parseClaudeSessions', () => {
       expect(session.requests[0].skillsUsed).toContain('investigate');
       expect(session.requests[0].skillsUsed).toHaveLength(1);
     });
+  });
+
+  it('createClaudeAccumulator only merges a finalized turn into the shared EditLocIndex, not a mid-turn snapshot preview', () => {
+    // mergeRequestEditLoc locks in the first value it's given for a requestId and ignores
+    // later calls, so if a snapshot() preview (taken before the tool result / next user
+    // message arrives) were allowed to merge, it would permanently undercount that request.
+    const editLocIndex: EditLocIndex = new Map();
+    const acc = createClaudeAccumulator('/tmp/sess-1.jsonl', 'ws', 'ws', editLocIndex);
+    acc.append(JSON.stringify(makeUser('edit a file', '2025-06-15T10:00:00Z', { uuid: 'req-1' })));
+    acc.append(JSON.stringify(makeToolAssistant('Edit', {
+      file_path: '/Users/me/proj/app.ts', old_string: 'a\nold', new_string: 'a\nnew\nextra',
+    })));
+    // Mid-turn snapshot: the edit hasn't been merged into the shared index yet.
+    acc.snapshot();
+    expect(editLocIndex.has('req-1')).toBe(false);
+    // A later user message finalizes the previous turn.
+    acc.append(JSON.stringify(makeUser('next turn', '2025-06-15T10:00:05Z')));
+    expect(editLocIndex.get('req-1')?.get('/Users/me/proj/app.ts')).toEqual({ added: 2, removed: 1 });
   });
 
   it('stores the Claude session cwd as workspaceRootPath', () => {

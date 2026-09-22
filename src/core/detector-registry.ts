@@ -6,14 +6,22 @@
 import { AntiPattern, OccurrenceDetail, PracticeGroup, Session, SessionRequest } from './types';
 import type { DetectionRule, DetectorEmission, RuleTemplateVars } from './types';
 import { getAllRules } from './rule-engine';
-import { registerAllBuiltinRules, loadPersonalRules, registerAllBuiltinMetrics } from './rule-loader';
+import { registerAllBuiltinRules, registerAllBuiltinMetrics } from './rule-loader';
 import { fillTemplate } from './rule-parser';
 import { parsePipeline, executePipeline, checkPipelineTrigger, resolveInheritance } from './rule-pipeline';
 import { isoWeek } from './helpers';
 
 registerAllBuiltinRules();
 registerAllBuiltinMetrics();
-loadPersonalRules();
+// Personal/project rules are intentionally NOT loaded here. They come from local
+// filesystem paths (~/.ai-engineer-coach/rules/, <workspace>/.ai-engineer-coach/rules/)
+// that rule-trust.ts's own contract says are untrusted until approved (TOFU). Loading
+// them at module-import time -- which runs before extension.ts's activate() has called
+// setDefaultTrustGate() -- resolved the trust gate to undefined and skipped gating
+// entirely, registering every rule file unchecked. The extension's activate() loads them
+// through the properly gated loadAllRuleLayersAsync()/loadPersonalRulesAsync(trustGate)
+// path instead; loadPersonalRules()/loadPersonalRulesAsync() are documented as safe to
+// call multiple times (clears + re-registers), so nothing here needs to prime that layer.
 
 interface DetectorContext {
   reqs: SessionRequest[];

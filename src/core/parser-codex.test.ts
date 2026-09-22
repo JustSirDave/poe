@@ -13,7 +13,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 import { EditLocIndex } from './edit-loc-diff';
-import { findCodexDirs, parseCodexSessions } from './parser-codex';
+import { findCodexDirs, parseCodexSessions, createCodexAccumulator } from './parser-codex';
 import { MAX_FILE_SIZE } from './parser-shared';
 
 function withCodexFile(lines: object[], run: (sessionsDir: string, filePath: string) => void): void {
@@ -87,6 +87,28 @@ describe('parseCodexSessions', () => {
       expect(request.editedFiles).toEqual([]);
       expect(editLocIndex.size).toBe(0);
     });
+  });
+
+  it('createCodexAccumulator only merges a finalized turn into the shared EditLocIndex, not a mid-turn snapshot preview', () => {
+    // Same idempotent-merge trap as the Claude accumulator: a snapshot() taken before the
+    // turn's finalizing user message would otherwise lock in an undercounted result.
+    const editLocIndex: EditLocIndex = new Map();
+    const acc = createCodexAccumulator('/tmp/rollout-2025-06-15-test.jsonl', editLocIndex);
+    acc.append(JSON.stringify({ type: 'session_meta', payload: { id: 'sess-codex-stream', cwd: '/Users/me/proj' } }));
+    acc.append(JSON.stringify({ type: 'response_item', timestamp: '2025-06-15T10:00:00Z',
+      payload: { role: 'user', type: 'message', content: [{ type: 'input_text', text: 'patch it' }] } }));
+    acc.append(JSON.stringify({ type: 'response_item', timestamp: '2025-06-15T10:00:01Z',
+      payload: {
+        type: 'custom_tool_call', call_id: 'call-stream', name: 'apply_patch',
+        input: ['*** Begin Patch', '*** Add File: src/new.ts', '+export const one = 1;', '+export const two = 2;', '*** End Patch'].join('\n'),
+      } }));
+    acc.append(JSON.stringify({ type: 'response_item', timestamp: '2025-06-15T10:00:02Z',
+      payload: { type: 'custom_tool_call_output', call_id: 'call-stream', output: { body: 'patch applied', success: true } } }));
+    acc.snapshot();
+    expect(editLocIndex.get('sess-codex-stream:codex:0')?.get('src/new.ts')).toBeUndefined();
+    acc.append(JSON.stringify({ type: 'response_item', timestamp: '2025-06-15T10:00:05Z',
+      payload: { role: 'user', type: 'message', content: [{ type: 'input_text', text: 'next turn' }] } }));
+    expect(editLocIndex.get('sess-codex-stream:codex:0')?.get('src/new.ts')).toEqual({ added: 2, removed: 0 });
   });
 
   it('excludes correlated apply_patch calls without a tool output', () => {
@@ -292,6 +314,40 @@ describe('parseCodexSessions skillsUsed extraction', () => {
       // The injected AGENTS.md / environment context must not be captured as a prompt.
       expect(texts.some(t => t.startsWith('# AGENTS.md instructions'))).toBe(false);
       expect(texts).toContain('what is this repo about?');
+    });
+  });
+
+  it('keeps tool activity recorded even when no real user message is ever captured for the turn', () => {
+    withCodexFile([
+      { type: 'session_meta', payload: { id: 'sess-inject-tools', cwd: '/Users/me/proj' } },
+      { type: 'turn_context', payload: { model: 'gpt-5.3-codex' } },
+      // Session-start injected context is filtered out, so currentUserMessage never gets set.
+      { type: 'response_item', timestamp: '2025-06-15T10:00:00Z',
+        payload: { type: 'message', role: 'user', content: [
+          { type: 'input_text', text: '# AGENTS.md instructions for /Users/me/proj\n\nfollow repo conventions' },
+        ] } },
+      // A tool call and its result happen before any real user message is ever captured.
+      { type: 'response_item', timestamp: '2025-06-15T10:00:01Z',
+        payload: {
+          type: 'custom_tool_call',
+          call_id: 'call-early',
+          name: 'apply_patch',
+          input: [
+            '*** Begin Patch',
+            '*** Add File: src/early.ts',
+            '+export const early = 1;',
+            '*** End Patch',
+          ].join('\n'),
+        } },
+      { type: 'response_item', timestamp: '2025-06-15T10:00:02Z',
+        payload: { type: 'custom_tool_call_output', call_id: 'call-early', output: { body: 'patch applied', success: true } } },
+    ], (sessionsDir) => {
+      const editLocIndex: EditLocIndex = new Map();
+      const sessions = parseCodexSessions(sessionsDir, editLocIndex);
+      expect(sessions).toHaveLength(1);
+      const request = sessions[0].requests[0];
+      expect(request.toolsUsed).toContain('apply_patch');
+      expect(request.editedFiles).toEqual(['src/early.ts']);
     });
   });
 });

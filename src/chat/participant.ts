@@ -140,16 +140,26 @@ async function runAgenticLoop(
     assistantParts.push(...toolCalls);
     messages.push(vscode.LanguageModelChatMessage.Assistant(assistantParts));
 
-    // Invoke each tool and collect results
+    // Invoke each tool and collect results. A single failing call (malformed
+    // model-generated arguments, a transient tool error, cancellation) must not
+    // take down the whole turn -- surface it as a tool result so the model can
+    // see the failure and decide how to proceed, the same way tool handlers
+    // elsewhere in this extension report failure as data instead of throwing.
     const resultParts: vscode.LanguageModelToolResultPart[] = [];
     for (const call of toolCalls) {
       response.progress(`Calling ${call.name}…`);
-      const result = await vscode.lm.invokeTool(call.name, {
-        input: call.input,
-        toolInvocationToken: request.toolInvocationToken,
-      }, token);
-
-      resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, result.content));
+      try {
+        const result = await vscode.lm.invokeTool(call.name, {
+          input: call.input,
+          toolInvocationToken: request.toolInvocationToken,
+        }, token);
+        resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, result.content));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        resultParts.push(new vscode.LanguageModelToolResultPart(call.callId, [
+          new vscode.LanguageModelTextPart(JSON.stringify({ error: `Tool ${call.name} failed: ${message}` })),
+        ]));
+      }
     }
 
     // Append user message with tool results

@@ -1,10 +1,10 @@
 # Poe
 
-**I am Poe.** A local workflow coach for Claude Code and Codex.
+**I am Poe.** A local workflow coach for Claude Code, Codex, VS Code Copilot, and GitHub Copilot CLI.
 
 Poe observes recorded coding sessions and surfaces reviewable ideas for reusable skills, memory, workflows, and response length. It runs in a browser on your computer, without VS Code. Analysis makes no model calls and does not scan project documents.
 
-This early working version builds on [Microsoft AI Engineering Coach](https://github.com/microsoft/AI-Engineering-Coach). The dashboard currently uses the Session Coach name. Poe is not yet an autonomous agent or a locally running language model.
+This early working version builds on [Microsoft AI Engineering Coach](https://github.com/microsoft/AI-Engineering-Coach). Poe is not yet an autonomous agent or a locally running language model.
 
 ## Start locally
 
@@ -13,28 +13,33 @@ Use Node.js 24 LTS:
 ```sh
 npm ci
 npm run build:coach
-npm run coach
+npm run poe
 ```
 
 Open the loopback URL printed in your terminal. See [the standalone guide](STANDALONE.md) for source configuration, prompt previews, MCP integration, and limitations.
 
 ## Current capabilities
 
-- Local Claude Code and Codex session parsing with automatic refresh.
+- Local Claude Code, Codex, VS Code Copilot, and GitHub Copilot CLI session parsing with automatic refresh.
+- A current-day analysis on Overview and historical token filters from local midnight through all loaded history.
+- Historical token trends with separate Claude Code and Codex activity, cache-read context, and coverage labels.
 - Evidence-backed candidates and persistent dismiss/reopen decisions.
 - Read-only MCP tools for reviewing findings with your assistant.
 - Internal approval-review and standard resume-message filtering.
 - Conversational response measurements separated from file-write payloads and recorded reasoning.
+- Within-session failure, retry, reread, correction, and recorded-reasoning signals.
+- Session-derived memory candidates for repeated or conflicting explicit preferences.
+- A lightweight MCP bridge that shares the running dashboard's parser and cache.
 
 Candidates need evaluation: repeated work can be intentional, and long responses can be necessary. Poe does not measure intelligence, prove token savings, or automatically install changes.
 
 ## Small next improvements
 
 1. A prompt-preview switch in the dashboard.
-2. Feedback reasons: useful, expected behavior, or incorrect.
-3. Open an exact session turn from an idea.
-4. A project filter for focused reviews.
-5. A small draft inbox with an editable skill proposal and explicit apply action.
+2. Open an exact session turn from an idea.
+3. A project filter for focused reviews.
+4. A small draft inbox with an editable skill proposal and explicit apply action.
+5. Outcome-based evaluation before applying a proposed workflow change.
 
 ## Development
 
@@ -63,7 +68,7 @@ Analyze your AI coding assistant usage — any harness, one dashboard.
 
 <p align="center">
 <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-<img alt="VS Code 1.115+" src="https://img.shields.io/badge/VS%20Code-1.115%2B-007ACC">
+<img alt="VS Code 1.125+" src="https://img.shields.io/badge/VS%20Code-1.125%2B-007ACC">
 </p>
 
 <br>

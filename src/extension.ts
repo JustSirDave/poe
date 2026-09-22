@@ -124,10 +124,18 @@ export function activate(context: vscode.ExtensionContext) {
   setWorkspaceTrustProvider(() => vscode.workspace.isTrusted);
   clearPending();
 
-  const rulesPromise = loadAllRuleLayersAsync(workspaceRoot, trustGate).then(counts => {
+  const rulesPromise = loadAllRuleLayersAsync(workspaceRoot, trustGate).then(async counts => {
     runtimeDebug('extension', 'rules-loaded',
       `builtin=${counts.builtin} personal=${counts.personal} project=${counts.project} pending=${getPending().length}` +
       (workspaceRoot ? ` root=${workspaceRoot}` : ''));
+    // detector-registry's rule snapshot is lazily built and cached on first access, which
+    // can happen before this gated load finishes. Invalidate it now so any early access
+    // (built-ins only) doesn't stick around instead of picking up the approved personal/
+    // project layers once they're actually ready.
+    try {
+      const reg = await import('./core/detector-registry');
+      reg.invalidateDetectorRegistry();
+    } catch { /* ignore */ }
   }).catch(err => {
     runtimeDebug('extension', 'rules-load-error', String(err));
   });

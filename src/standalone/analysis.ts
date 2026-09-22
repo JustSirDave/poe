@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
 import type { Session, SessionRequest } from '../core/types';
+import { redactSecrets } from '../core/redact-secrets';
+import { estimateCostUsd, normalizeModel } from '../core/helpers';
+import type { EditLocIndex } from '../core/edit-loc-diff';
 import { responseContexts, type RequestContext } from './request-context';
 import { sessionFindings } from './session-findings';
-import { redactSecrets } from '../core/redact-secrets';
+import { memoryFindings } from './memory-findings';
 import type { CoachConfig } from './config';
 
-export interface Evidence { sessionId: string; requestId: string; harness: string; workspace: string; timestamp: number | null; contextRequestId?: string; toolCallIds?: string[]; excerpt?: string }
+export interface Evidence { sessionId: string; requestId: string; harness: string; workspace: string; timestamp: number | null; contextRequestId?: string; toolCallIds?: string[]; reasoningIds?: string[]; details?: string[]; excerpt?: string }
 export interface Finding {
   id: string;
   firstSeen?: number;
@@ -21,6 +24,43 @@ export interface Finding {
   caution: string;
   draft: string;
 }
+export interface TokenUsagePoint {
+  date: string;
+  harness: string;
+  sessions: number;
+  turns: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  turnsWithInput: number;
+  turnsWithOutput: number;
+}
+export interface HarnessActivity {
+  sessions: number;
+  turns: number;
+  firstActivity?: number;
+  lastActivity?: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  turnsWithInput: number;
+  turnsWithOutput: number;
+}
+export interface ModelUsageSummary { modelId: string; label: string; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number; estimatedCostUsd: number | null }
+export interface ToolSourceSummary { source: string; kind: 'mcp' | 'tool'; calls: number }
+export interface UsageBreakdown {
+  estimatedCostUsd: number | null;
+  hasUnknownModelCost: boolean;
+  cacheHitRate: number | null;
+  activeElapsedMs: number;
+  linesAdded: number;
+  linesRemoved: number;
+  hasLocData: boolean;
+  models: ModelUsageSummary[];
+  toolSources: ToolSourceSummary[];
+}
 export interface CoachReport {
   generatedAt: string;
   excludedInternalSessions?: number;
@@ -29,15 +69,99 @@ export interface CoachReport {
   latestSessionActivity?: number;
   activeWindowDays?: number;
   toolSignalCoverage?: { retained: number; dropped: number };
+  reasoningSignalCoverage?: { retained: number; dropped: number; previews: boolean };
   requestCount: number;
   harnesses: Record<string, number>;
-  recordedTokens: { input: number; output: number; turnsWithInput: number; turnsWithOutput: number };
+  recordedTokens: { input: number; output: number; cacheRead: number; cacheWrite: number; turnsWithInput: number; turnsWithOutput: number };
+  usageHistory: { firstActivity?: number; lastActivity?: number; days: TokenUsagePoint[]; byHarness: Record<string, HarnessActivity> };
+  usageBreakdown: UsageBreakdown;
   findings: Finding[];
   sources: { harness: string; root: string; exists: boolean }[];
   scan: { incremental?: number; bytesRead?: number; files: number; parsed: number; reused: number; skipped: number; warnings: string[] };
 }
 interface Turn { session: Session; request: SessionRequest; context?: RequestContext }
 const digest = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 20);
+function localDateKey(timestamp: number): string {
+  const date = new Date(timestamp); const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+type UsagePoint = { date: string; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number; turnsWithInput: number; turnsWithOutput: number };
+interface SessionUsage {
+  firstActivity?: number; lastActivity?: number;
+  summary: { turns: number; input: number; output: number; cacheRead: number; cacheWrite: number; turnsWithInput: number; turnsWithOutput: number };
+  points: Map<string, UsagePoint>;
+}
+// Reused Session objects (unchanged log files) are the same object reference across scans
+// (see efficiency-scan.ts's cache), so per-session token aggregation can be computed once and
+// reused instead of re-walking every request on each refresh. A session's timestamps never
+// change once parsed, so a cached entry stays valid for the life of that Session object; the
+// rare exception is a request whose timestamp exceeds `now` at first-cache time (clock skew),
+// which then stays excluded until the underlying file changes and the session is reparsed.
+const sessionUsageCache = new WeakMap<Session, SessionUsage>();
+function computeSessionUsage(session: Session, now: number): SessionUsage {
+  const summary = { turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0 };
+  const points = new Map<string, UsagePoint>();
+  let firstActivity: number | undefined;
+  let lastActivity: number | undefined;
+  for (const request of session.requests) {
+    const timestamp = request.timestamp;
+    if (timestamp === null || timestamp > now) continue;
+    firstActivity = firstActivity === undefined ? timestamp : Math.min(firstActivity, timestamp);
+    lastActivity = lastActivity === undefined ? timestamp : Math.max(lastActivity, timestamp);
+    summary.turns++;
+    if (request.promptTokens !== null && Number.isFinite(request.promptTokens) && request.promptTokens >= 0) { summary.input += request.promptTokens; summary.turnsWithInput++; }
+    if (request.completionTokens !== null && Number.isFinite(request.completionTokens) && request.completionTokens >= 0) { summary.output += request.completionTokens; summary.turnsWithOutput++; }
+    if (request.cacheReadTokens !== null && Number.isFinite(request.cacheReadTokens) && request.cacheReadTokens >= 0) summary.cacheRead += request.cacheReadTokens;
+    if (request.cacheWriteTokens !== null && Number.isFinite(request.cacheWriteTokens) && request.cacheWriteTokens >= 0) summary.cacheWrite += request.cacheWriteTokens;
+    const date = localDateKey(timestamp);
+    const point = points.get(date) || { date, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0 };
+    point.turns++;
+    if (request.promptTokens !== null && Number.isFinite(request.promptTokens) && request.promptTokens >= 0) { point.input += request.promptTokens; point.turnsWithInput++; }
+    if (request.completionTokens !== null && Number.isFinite(request.completionTokens) && request.completionTokens >= 0) { point.output += request.completionTokens; point.turnsWithOutput++; }
+    if (request.cacheReadTokens !== null && Number.isFinite(request.cacheReadTokens) && request.cacheReadTokens >= 0) point.cacheRead += request.cacheReadTokens;
+    if (request.cacheWriteTokens !== null && Number.isFinite(request.cacheWriteTokens) && request.cacheWriteTokens >= 0) point.cacheWrite += request.cacheWriteTokens;
+    points.set(date, point);
+  }
+  return { firstActivity, lastActivity, summary, points };
+}
+function usageHistory(sessions: Session[], now: number): CoachReport['usageHistory'] {
+  type MutablePoint = TokenUsagePoint & { sessionIds: Set<string> };
+  const points = new Map<string, MutablePoint>();
+  const harnessSessions = new Map<string, Set<string>>();
+  const byHarness: Record<string, HarnessActivity> = {};
+  let firstActivity: number | undefined;
+  let lastActivity: number | undefined;
+  for (const session of sessions) {
+    if (session.sessionOrigin === 'guardian') continue;
+    const sessionKey = `${session.harness}:${session.sessionId}`;
+    const seen = harnessSessions.get(session.harness) || new Set<string>();
+    seen.add(sessionKey); harnessSessions.set(session.harness, seen);
+    const summary = byHarness[session.harness] ||= { sessions: 0, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0 };
+    let usage = sessionUsageCache.get(session);
+    if (!usage) { usage = computeSessionUsage(session, now); sessionUsageCache.set(session, usage); }
+    if (usage.firstActivity !== undefined) firstActivity = firstActivity === undefined ? usage.firstActivity : Math.min(firstActivity, usage.firstActivity);
+    if (usage.lastActivity !== undefined) lastActivity = lastActivity === undefined ? usage.lastActivity : Math.max(lastActivity, usage.lastActivity);
+    if (usage.firstActivity !== undefined) summary.firstActivity = summary.firstActivity === undefined ? usage.firstActivity : Math.min(summary.firstActivity, usage.firstActivity);
+    if (usage.lastActivity !== undefined) summary.lastActivity = summary.lastActivity === undefined ? usage.lastActivity : Math.max(summary.lastActivity, usage.lastActivity);
+    summary.turns += usage.summary.turns; summary.input += usage.summary.input; summary.output += usage.summary.output;
+    summary.cacheRead += usage.summary.cacheRead; summary.cacheWrite += usage.summary.cacheWrite;
+    summary.turnsWithInput += usage.summary.turnsWithInput; summary.turnsWithOutput += usage.summary.turnsWithOutput;
+    for (const day of usage.points.values()) {
+      const key = `${day.date}:${session.harness}`;
+      const point = points.get(key) || { date: day.date, harness: session.harness, sessions: 0, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0, sessionIds: new Set<string>() };
+      point.turns += day.turns; point.input += day.input; point.output += day.output;
+      point.cacheRead += day.cacheRead; point.cacheWrite += day.cacheWrite;
+      point.turnsWithInput += day.turnsWithInput; point.turnsWithOutput += day.turnsWithOutput;
+      point.sessionIds.add(sessionKey);
+      points.set(key, point);
+    }
+  }
+  for (const [harness, summary] of Object.entries(byHarness)) summary.sessions = harnessSessions.get(harness)?.size || 0;
+  const days = [...points.values()].map(({ sessionIds, ...point }) => ({ ...point, sessions: sessionIds.size }))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.harness.localeCompare(b.harness));
+  return { firstActivity, lastActivity, days, byHarness };
+}
 
 function evidence(turn: Turn, excerpts: boolean): Evidence {
   return {
@@ -70,7 +194,84 @@ function createFinding(kind: Exclude<Finding['kind'], 'session'>, key: string, t
   };
 }
 
-export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now = Date.now()): CoachReport {
+/** A tool name's MCP server, or 'tool' for a native (non-MCP) call. Real names use a
+ *  double-underscore delimiter: `mcp__<server>__<tool>`. */
+function toolSource(toolName: string): { source: string; kind: 'mcp' | 'tool' } {
+  if (toolName.startsWith('mcp__')) {
+    const rest = toolName.slice('mcp__'.length);
+    const end = rest.indexOf('__');
+    if (end > 0) return { source: rest.slice(0, end), kind: 'mcp' };
+  }
+  return { source: toolName, kind: 'tool' };
+}
+
+function accumulateModelUsage(models: Map<string, ModelUsageSummary>, request: SessionRequest): { uncachedInput: number; cacheRead: number; cost: number | null } {
+  const modelKey = normalizeModel(request.modelId);
+  const entry = models.get(modelKey) || { modelId: modelKey, label: request.modelId, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, estimatedCostUsd: 0 };
+  entry.turns++;
+  const input = request.promptTokens && request.promptTokens > 0 ? request.promptTokens : 0;
+  const output = request.completionTokens && request.completionTokens > 0 ? request.completionTokens : 0;
+  const cacheRead = request.cacheReadTokens && request.cacheReadTokens > 0 ? request.cacheReadTokens : 0;
+  const cacheWrite = request.cacheWriteTokens && request.cacheWriteTokens > 0 ? request.cacheWriteTokens : 0;
+  entry.input += input; entry.output += output; entry.cacheRead += cacheRead; entry.cacheWrite += cacheWrite;
+  const cost = estimateCostUsd(request.modelId, request.promptTokens, request.completionTokens, request.cacheReadTokens, request.cacheWriteTokens);
+  if (cost === null) entry.estimatedCostUsd = null;
+  else if (entry.estimatedCostUsd !== null) entry.estimatedCostUsd += cost;
+  models.set(modelKey, entry);
+  return { uncachedInput: Math.max(0, input - cacheRead - cacheWrite), cacheRead, cost };
+}
+
+function accumulateToolSources(toolSources: Map<string, ToolSourceSummary>, request: SessionRequest): void {
+  for (const toolName of request.toolsUsed) {
+    const { source, kind } = toolSource(toolName);
+    const summary = toolSources.get(source) || { source, kind, calls: 0 };
+    summary.calls++;
+    toolSources.set(source, summary);
+  }
+}
+
+function accumulateEditLoc(editLocIndex: EditLocIndex | undefined, requestId: string, seen: Set<string>): { added: number; removed: number } | undefined {
+  if (!editLocIndex || seen.has(requestId)) return undefined;
+  seen.add(requestId);
+  const fileEdits = editLocIndex.get(requestId);
+  if (!fileEdits) return undefined;
+  let added = 0; let removed = 0;
+  for (const loc of fileEdits.values()) { added += loc.added; removed += loc.removed; }
+  return { added, removed };
+}
+
+function computeUsageBreakdown(turns: Turn[], editLocIndex: EditLocIndex | undefined): UsageBreakdown {
+  const models = new Map<string, ModelUsageSummary>();
+  const toolSources = new Map<string, ToolSourceSummary>();
+  let estimatedCostUsd: number | null = null;
+  let hasUnknownModelCost = false;
+  let uncachedInputTotal = 0;
+  let cacheReadTotal = 0;
+  let activeElapsedMs = 0;
+  let linesAdded = 0;
+  let linesRemoved = 0;
+  let hasLocData = false;
+  const seenRequests = new Set<string>();
+  for (const turn of turns) {
+    const r = turn.request;
+    const { uncachedInput, cacheRead, cost } = accumulateModelUsage(models, r);
+    uncachedInputTotal += uncachedInput; cacheReadTotal += cacheRead;
+    if (cost === null) hasUnknownModelCost = true;
+    else estimatedCostUsd = (estimatedCostUsd ?? 0) + cost;
+    if (r.totalElapsed !== null && Number.isFinite(r.totalElapsed) && r.totalElapsed > 0) activeElapsedMs += r.totalElapsed;
+    accumulateToolSources(toolSources, r);
+    const loc = accumulateEditLoc(editLocIndex, r.requestId, seenRequests);
+    if (loc) { hasLocData = true; linesAdded += loc.added; linesRemoved += loc.removed; }
+  }
+  const cacheHitRate = cacheReadTotal + uncachedInputTotal > 0 ? cacheReadTotal / (cacheReadTotal + uncachedInputTotal) : null;
+  return {
+    estimatedCostUsd, hasUnknownModelCost, cacheHitRate, activeElapsedMs, linesAdded, linesRemoved, hasLocData,
+    models: [...models.values()].sort((a, b) => b.turns - a.turns),
+    toolSources: [...toolSources.values()].sort((a, b) => b.calls - a.calls),
+  };
+}
+
+export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now = Date.now(), editLocIndex?: EditLocIndex): CoachReport {
   // Older turns may establish task context, but never count toward current findings.
   const activeWindowDays = Math.min(config.lookbackDays, 5);
   const cutoff = now - activeWindowDays * 86400000;
@@ -83,13 +284,18 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
   const large: Turn[] = [];
   const concise: Turn[] = [];
   const responseReview = { requestedDetail: 0, unclassified: 0, brevityConflict: 0 };
-  const tokens = { input: 0, output: 0, turnsWithInput: 0, turnsWithOutput: 0 };
+  const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turnsWithInput: 0, turnsWithOutput: 0 };
   const harnesses: Record<string, number> = {};
   for (const turn of turns) {
     const r = turn.request;
     harnesses[turn.session.harness] = (harnesses[turn.session.harness] || 0) + 1;
+    // Note: input already folds cache reads/writes in for harnesses whose promptTokens is
+    // turn-aggregate scoped (see counterScopes in analysis-dataset.ts); cacheRead/cacheWrite
+    // below are the same underlying numbers broken out for display, not an additional amount.
     if (r.promptTokens !== null && Number.isFinite(r.promptTokens) && r.promptTokens >= 0) { tokens.input += r.promptTokens; tokens.turnsWithInput++; }
     if (r.completionTokens !== null && Number.isFinite(r.completionTokens) && r.completionTokens >= 0) { tokens.output += r.completionTokens; tokens.turnsWithOutput++; }
+    if (r.cacheReadTokens !== null && Number.isFinite(r.cacheReadTokens) && r.cacheReadTokens >= 0) tokens.cacheRead += r.cacheReadTokens;
+    if (r.cacheWriteTokens !== null && Number.isFinite(r.cacheWriteTokens) && r.cacheWriteTokens >= 0) tokens.cacheWrite += r.cacheWriteTokens;
     const message = r.messageText.trim().replaceAll(/\s+/g, ' ');
     // Exact normalized repetitions avoid merging prompts whose constraints differ.
     // Exclude truncated messages and obvious injected context.
@@ -109,11 +315,10 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
       else { responseReview.unclassified++; large.push(turn); }
     }
   }
-  const findings: Finding[] = sessionFindings(sessions, cutoff, now);
+  const findings: Finding[] = [...sessionFindings(sessions, cutoff, now), ...memoryFindings(sessions, cutoff, now, config)];
   for (const [key, group] of promptGroups) {
     if (group.length < config.minOccurrences || new Set(group.map(t => t.session.sessionId)).size < 2) continue;
-    const kind = /\b(always|never|remember|prefer|from now on)\b/i.test(group[0].request.messageText) ? 'memory' : 'skill';
-    findings.push(createFinding(kind, key, group, config));
+    findings.push(createFinding('skill', key, group, config));
   }
   for (const [key, group] of workflowGroups) {
     if (group.length >= config.minOccurrences && new Set(group.map(t => t.session.sessionId)).size >= 2) findings.push(createFinding('workflow', key, group, config));
@@ -131,12 +336,14 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
   findings.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0) || b.occurrences - a.occurrences || a.id.localeCompare(b.id));
   return {
     toolSignalCoverage: { retained: sessions.reduce((n, s) => n + (s.toolActivity?.length || 0), 0), dropped: sessions.reduce((n, s) => n + (s.toolActivityDropped || 0), 0) },
+    reasoningSignalCoverage: { retained: sessions.reduce((n, s) => n + (s.reasoningActivity?.length || 0), 0), dropped: sessions.reduce((n, s) => n + (s.reasoningActivityDropped || 0), 0), previews: config.includeExcerpts },
     activeWindowDays,
     latestSessionActivity: sessions.filter(s => s.sessionOrigin !== 'guardian').reduce((latest, s) => Math.max(latest, s.lastMessageDate || 0), 0) || undefined,
     generatedAt: new Date(now).toISOString(), sessionCount: new Set(turns.map(t => `${t.session.harness}:${t.session.sessionId}`)).size,
     responseReview,
     excludedInternalSessions: sessions.filter(session => session.sessionOrigin === 'guardian').length,
-    requestCount: turns.length, harnesses, recordedTokens: tokens, findings: findings.slice(0, 40),
+    requestCount: turns.length, harnesses, recordedTokens: tokens, usageHistory: usageHistory(sessions, now),
+    usageBreakdown: computeUsageBreakdown(turns, editLocIndex), findings: findings.slice(0, 40),
     sources: [], scan: { files: 0, parsed: 0, reused: 0, skipped: 0, warnings: [] },
   };
 }

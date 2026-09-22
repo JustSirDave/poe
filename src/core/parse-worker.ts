@@ -9,7 +9,7 @@
  */
 
 import { parentPort } from 'worker_threads';
-import { scanEfficiency } from './efficiency-scan';
+import { scanAnalysisDataset, scanEfficiency } from './efficiency-scan';
 import { stripSessionsForMemory } from './cache';
 import { emitResultChunks, DEFAULT_SESSION_CHUNK_SIZE } from './parse-chunking';
 import { createAckWindow, shouldSendProgressImmediately } from './parse-worker-stream';
@@ -20,6 +20,7 @@ import { createTelemetrySampler } from './worker-telemetry';
 
 interface ParseWorkerRequest {
   efficiency?: unknown;
+  analysisData?: unknown;
   logsDirs?: string[];
 }
 
@@ -52,9 +53,10 @@ function send(msg: unknown): void {
 
 function parseWorkerRequest(msg: unknown): ParseWorkerRequest {
   if (typeof msg !== 'object' || msg === null) return {};
-  const candidate = msg as { logsDirs?: unknown; efficiency?: unknown };
+  const candidate = msg as { logsDirs?: unknown; efficiency?: unknown; analysisData?: unknown };
   return {
     efficiency: candidate.efficiency,
+    analysisData: candidate.analysisData,
     logsDirs: Array.isArray(candidate.logsDirs)
       ? candidate.logsDirs.filter((dir): dir is string => typeof dir === 'string')
       : undefined,
@@ -95,6 +97,11 @@ function onMessage(handler: (msg: ParseWorkerRequest) => void | Promise<void>): 
 const sampleTelemetry = createTelemetrySampler({ warningCounts: () => getParseWarningCounts() });
 
 onMessage(async (msg) => {
+  if (msg.analysisData !== undefined) {
+    try { send({ type: 'analysisDataResult', dataset: scanAnalysisDataset(msg.analysisData) }); }
+    catch (error) { send({ type: 'error', message: error instanceof Error ? error.message : 'Analysis data export failed' }); }
+    return;
+  }
   if (msg.efficiency !== undefined) {
     try { send({ type: 'efficiencyResult', report: scanEfficiency(msg.efficiency) }); }
     catch (error) { send({ type: 'error', message: error instanceof Error ? error.message : 'Scan failed' }); }
