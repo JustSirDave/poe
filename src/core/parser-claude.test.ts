@@ -13,7 +13,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import { describe, it, expect } from 'vitest';
 import { EditLocIndex } from './edit-loc-diff';
-import { parseClaudeSessions } from './parser-claude';
+import { parseClaudeSessions, createClaudeAccumulator } from './parser-claude';
 
 /** os.tmpdir() on Windows often returns 8.3 short names (e.g. TAMASB~1)
  *  that don't match readdirSync output. Resolve to the long form so
@@ -608,6 +608,24 @@ describe('parseClaudeSessions', () => {
       expect(session.requests[0].skillsUsed).toContain('investigate');
       expect(session.requests[0].skillsUsed).toHaveLength(1);
     });
+  });
+
+  it('createClaudeAccumulator only merges a finalized turn into the shared EditLocIndex, not a mid-turn snapshot preview', () => {
+    // mergeRequestEditLoc locks in the first value it's given for a requestId and ignores
+    // later calls, so if a snapshot() preview (taken before the tool result / next user
+    // message arrives) were allowed to merge, it would permanently undercount that request.
+    const editLocIndex: EditLocIndex = new Map();
+    const acc = createClaudeAccumulator('/tmp/sess-1.jsonl', 'ws', 'ws', editLocIndex);
+    acc.append(JSON.stringify(makeUser('edit a file', '2025-06-15T10:00:00Z', { uuid: 'req-1' })));
+    acc.append(JSON.stringify(makeToolAssistant('Edit', {
+      file_path: '/Users/me/proj/app.ts', old_string: 'a\nold', new_string: 'a\nnew\nextra',
+    })));
+    // Mid-turn snapshot: the edit hasn't been merged into the shared index yet.
+    acc.snapshot();
+    expect(editLocIndex.has('req-1')).toBe(false);
+    // A later user message finalizes the previous turn.
+    acc.append(JSON.stringify(makeUser('next turn', '2025-06-15T10:00:05Z')));
+    expect(editLocIndex.get('req-1')?.get('/Users/me/proj/app.ts')).toEqual({ added: 2, removed: 1 });
   });
 
   it('stores the Claude session cwd as workspaceRootPath', () => {

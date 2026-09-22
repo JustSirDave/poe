@@ -325,6 +325,31 @@ export function tokenCostInCredits(
   return (inputCost + outputCost + cacheReadCost + cacheWriteCost) * 100;
 }
 
+/**
+ * Estimate USD cost for a single request from recorded token counts, using the same
+ * published per-model rate table as tokenCostInCredits(). Unlike that function, this
+ * returns `null` -- not a misleading guess -- when the model has no rate entry, instead
+ * of falling back to the Copilot premium-request multiplier (a different unit entirely).
+ * `promptTokens` is the *total* recorded input (cache reads/writes included); this
+ * function derives the uncached portion itself via resolveTokens().
+ */
+export function estimateCostUsd(
+  model: string,
+  promptTokens: number | null,
+  completionTokens: number | null,
+  cacheReadTokens: number | null = null,
+  cacheWriteTokens: number | null = null,
+): number | null {
+  const rates = MODEL_TOKEN_RATES[normalizeModel(model)];
+  if (!rates) return null;
+  const { uncachedInput, output, cacheRead, cacheWrite } = resolveTokens(promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens);
+  const inputCost = (uncachedInput / 1_000_000) * rates.input;
+  const outputCost = (output / 1_000_000) * rates.output;
+  const cacheReadCost = (cacheRead / 1_000_000) * rates.cached;
+  const cacheWriteCost = (cacheWrite / 1_000_000) * (rates.cacheWrite ?? rates.input);
+  return inputCost + outputCost + cacheReadCost + cacheWriteCost;
+}
+
 /* ---- Work-type classification ---- */
 const WORK_PATTERNS: [RegExp, WorkType][] = [
   [/\b(fix|bug|error|issue|crash|exception|debug|problem|broken|fail|wrong)\b/i, 'bug fix'],

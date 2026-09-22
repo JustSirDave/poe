@@ -78,6 +78,54 @@ it('requires enough current evidence even when a wider history window is configu
   expect(analyzeEfficiency(sessions, config, now + 1).findings).toEqual([]);
 });
 
+describe('usageBreakdown', () => {
+  it('groups requests by normalized model id and estimates cost only for known models', () => {
+    const a = session('a', 'hello'); a.requests[0].modelId = 'claude-sonnet-4-5-20250514'; a.requests[0].promptTokens = 1_000_000; a.requests[0].completionTokens = 1_000_000;
+    const b = session('b', 'hi'); b.requests[0].modelId = 'some-unreleased-model'; b.requests[0].promptTokens = 500;
+    const report = analyzeEfficiency([a, b], config, now);
+    expect(report.usageBreakdown.models).toHaveLength(2);
+    const known = report.usageBreakdown.models.find(m => m.modelId === 'claude-sonnet-4.5')!;
+    expect(known.turns).toBe(1);
+    expect(known.estimatedCostUsd).toBeCloseTo(18.0, 5);
+    const unknown = report.usageBreakdown.models.find(m => m.label === 'some-unreleased-model')!;
+    expect(unknown.estimatedCostUsd).toBeNull();
+    expect(report.usageBreakdown.hasUnknownModelCost).toBe(true);
+    expect(report.usageBreakdown.estimatedCostUsd).toBeCloseTo(18.0, 5);
+  });
+
+  it('groups MCP tool calls by server name split on the double-underscore delimiter', () => {
+    const s = session('a', 'hello');
+    s.requests[0].toolsUsed = ['mcp__Claude_Browser__computer', 'mcp__Claude_Browser__navigate', 'Read', 'Read'];
+    const report = analyzeEfficiency([s], config, now);
+    const sources = new Map(report.usageBreakdown.toolSources.map(t => [t.source, t]));
+    expect(sources.get('Claude_Browser')).toMatchObject({ kind: 'mcp', calls: 2 });
+    expect(sources.get('Read')).toMatchObject({ kind: 'tool', calls: 2 });
+  });
+
+  it('computes cache hit rate from cache-read share of total input', () => {
+    const s = session('a', 'hello');
+    s.requests[0].modelId = 'claude-sonnet-4.5'; s.requests[0].promptTokens = 1000; s.requests[0].cacheReadTokens = 800;
+    const report = analyzeEfficiency([s], config, now);
+    expect(report.usageBreakdown.cacheHitRate).toBeCloseTo(0.8, 5);
+  });
+
+  it('reports no LOC data when no editLocIndex is supplied', () => {
+    const s = session('a', 'hello');
+    const report = analyzeEfficiency([s], config, now);
+    expect(report.usageBreakdown.hasLocData).toBe(false);
+    expect(report.usageBreakdown.linesAdded).toBe(0);
+  });
+
+  it('sums added/removed lines from the editLocIndex for requests in the active window', () => {
+    const s = session('a', 'hello');
+    const editLocIndex = new Map([[s.requests[0].requestId, new Map([['file:///a.ts', { added: 12, removed: 4 }]])]]);
+    const report = analyzeEfficiency([s], config, now, editLocIndex);
+    expect(report.usageBreakdown.hasLocData).toBe(true);
+    expect(report.usageBreakdown.linesAdded).toBe(12);
+    expect(report.usageBreakdown.linesRemoved).toBe(4);
+  });
+});
+
 it('keeps historical usage separate from the five-day coaching window', () => {
   const recent = session('recent');
   recent.requests[0].promptTokens = 120;

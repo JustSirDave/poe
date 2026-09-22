@@ -666,9 +666,9 @@ export function parseCodexSessionFile(filePath: string, editLocIndex?: EditLocIn
 }
 
 /** Retains finalized turns while only consuming new JSONL records. */
-export function createCodexAccumulator(filePath: string): import('./session-accumulator').SessionAccumulator {
+export function createCodexAccumulator(filePath: string, editLocIndex?: EditLocIndex): import('./session-accumulator').SessionAccumulator {
   const meta: CodexSessionMeta = { sessionId: path.basename(filePath, '.jsonl'), cwd: '', source: '', model: '' };
-  const live = createCodexState('');
+  const live = createCodexState('', editLocIndex);
   let cleaned = 0;
   return {
     append(raw) {
@@ -678,7 +678,11 @@ export function createCodexAccumulator(filePath: string): import('./session-accu
       while (cleaned < live.requests.length) live.requests[cleaned++].responseText = '';
     },
     snapshot() {
-      const state: CodexParseState = { ...live, requests: [...live.requests], pendingToolEdits: new Map(live.pendingToolEdits) };
+      // The copy's flush below previews the in-progress (not yet finalized) turn. It must
+      // not merge into the shared editLocIndex: mergeRequestEditLoc locks in whatever it's
+      // given for a requestId and ignores later calls, so an incomplete preview merge here
+      // would permanently undercount that request's lines once the turn actually finishes.
+      const state: CodexParseState = { ...live, requests: [...live.requests], pendingToolEdits: new Map(live.pendingToolEdits), editLocIndex: undefined };
       flushCodexTurn(state, meta.model);
       if (!state.requests.length) return null;
       for (const request of state.requests) request.responseText = '';

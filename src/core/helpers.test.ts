@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { describe, it, expect } from 'vitest';
-import { fileUriToPath, toDateStr, startOfDay, endOfDay, isoWeek, normalizeModel, modelMultiplier, classifyWorkType, languageFromFile } from './helpers';
+import { fileUriToPath, toDateStr, startOfDay, endOfDay, isoWeek, normalizeModel, modelMultiplier, classifyWorkType, languageFromFile, estimateCostUsd } from './helpers';
 
 describe('languageFromFile', () => {
   it('maps a known extension to the same label fenced code blocks use', () => {
@@ -205,5 +205,27 @@ describe('classifyWorkType', () => {
 
   it('matches higher-priority pattern first (bug fix before feature)', () => {
     expect(classifyWorkType('fix and add new feature')).toBe('bug fix');
+  });
+});
+
+describe('estimateCostUsd', () => {
+  it('computes dollar cost for a model with a published rate', () => {
+    // claude-sonnet-4.5: input $3.00/1M, output $15.00/1M per 1M tokens.
+    const cost = estimateCostUsd('claude-sonnet-4.5', 1_000_000, 1_000_000, null, null);
+    expect(cost).toBeCloseTo(3.0 + 15.0, 5);
+  });
+
+  it('returns null for a model with no rate entry instead of a Copilot-multiplier fallback', () => {
+    expect(estimateCostUsd('some-unlisted-model', 1000, 1000, null, null)).toBeNull();
+  });
+
+  it('bills only the uncached portion of input at the input rate, cache reads at the cached rate', () => {
+    // promptTokens is the total input including the cached portion (resolveTokens semantics).
+    const cost = estimateCostUsd('claude-sonnet-4.5', 1_000_000, 0, 1_000_000, null);
+    expect(cost).toBeCloseTo(0.30, 5);
+  });
+
+  it('returns 0, not null, when every token count is 0 for a known model', () => {
+    expect(estimateCostUsd('claude-sonnet-4.5', 0, 0, 0, 0)).toBe(0);
   });
 });

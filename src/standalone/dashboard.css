@@ -399,6 +399,12 @@ h1 { font-size: clamp(29px, 3vw, 40px); line-height: 1.1; letter-spacing: -.04em
 .assistant-card.vscode .assistant-mark, .usage-breakdown-row.vscode .assistant-mark { background: #e8f0fe; color: #3b75b6; }
 .assistant-card.copilot .assistant-mark, .usage-breakdown-row.copilot .assistant-mark { background: var(--yellow-soft); color: #b9820d; }
 .source-activity { font-size: 10px; margin: 8px 0 0; }
+.usage-share-row { --assistant-color: var(--accent); display: grid; gap: 6px; padding: 12px 4px; border-bottom: 1px solid var(--line); }
+.usage-share-row:last-child { border-bottom: 0; }
+.usage-share-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.usage-share-head strong { font-size: 13px; }
+.usage-share-head span { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.measurement-note-inline { font-size: 11px; color: var(--muted); margin: 14px 4px 0; }
 
 /* ---- Findings ---- */
 .explanation { display: flex; align-items: flex-start; gap: 14px; background: var(--accent-soft); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 24px; }

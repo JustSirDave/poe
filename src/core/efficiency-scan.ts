@@ -12,10 +12,15 @@ import { observeTools } from './tool-activity';
 import { IncrementalLog } from './incremental-log';
 import type { Session } from './types';
 import { buildAnalysisDataset, type AnalysisDataset } from './analysis-dataset';
+import type { EditLocIndex } from './edit-loc-diff';
 
 type SourceKind = keyof CoachConfig['sources'];
 interface FileEntry { file: string; root: string; source: SourceKind; parser: 'session-log' | 'vscode-chat' | 'copilot-events'; workspaceId?: string; workspaceName?: string; fingerprint: string; modified: number; size: number }
 const cache = new Map<string, { fingerprint: string; session: Session | null; reader?: IncrementalLog }>();
+// Shared across scans for the same process, like `cache` above: accumulator closures are
+// created once per file (reused via IncrementalLog across incremental re-scans), so the index
+// they merge finalized edits into must outlive any single scan to keep prior history.
+const sharedEditLocIndex: EditLocIndex = new Map();
 
 function inside(file: string, root: string): boolean {
   const relative = path.relative(root, file);
@@ -76,6 +81,7 @@ function scanSessions(input: unknown): {
   sessions: Session[];
   sources: CoachReport['sources'];
   scan: CoachReport['scan'];
+  editLocIndex: EditLocIndex;
 } {
   const config = coachConfigSchema.parse(input);
   const { files, sources, warnings } = discover(config);
@@ -96,8 +102,8 @@ function scanSessions(input: unknown): {
         if (entry.parser === 'session-log') {
           const harness = entry.source === 'codex' ? 'codex' : 'claude';
           const reader = item?.reader || new IncrementalLog(() => observeTools(harness === 'codex'
-            ? createCodexAccumulator(entry.file)
-            : createClaudeAccumulator(entry.file, path.dirname(entry.file), path.basename(path.dirname(entry.file))), harness, config.includeExcerpts));
+            ? createCodexAccumulator(entry.file, sharedEditLocIndex)
+            : createClaudeAccumulator(entry.file, path.dirname(entry.file), path.basename(path.dirname(entry.file)), sharedEditLocIndex), harness, config.includeExcerpts));
           const result = reader.read(entry.file);
           bytesRead += result.bytesRead;
           if (result.incremental) incremental++;
@@ -119,12 +125,12 @@ function scanSessions(input: unknown): {
     if (sessionKeys.has(key)) continue;
     sessionKeys.add(key); sessions.push(session);
   }
-  return { config, sessions, sources, scan: { files: files.length, parsed, reused, skipped, warnings, incremental, bytesRead } };
+  return { config, sessions, sources, scan: { files: files.length, parsed, reused, skipped, warnings, incremental, bytesRead }, editLocIndex: sharedEditLocIndex };
 }
 
 export function scanEfficiency(input: unknown): CoachReport {
-  const { config, sessions, sources, scan } = scanSessions(input);
-  const report = analyzeEfficiency(sessions, config);
+  const { config, sessions, sources, scan, editLocIndex } = scanSessions(input);
+  const report = analyzeEfficiency(sessions, config, Date.now(), editLocIndex);
   report.sources = sources;
   report.scan = scan;
   return report;

@@ -268,6 +268,49 @@ function renderUsage(): void {
     row.append(identity, element('span', `${rowTurns.toLocaleString()} turns`, 'usage-cell'), element('span', total ? compact(total) : 'Unknown', 'usage-cell strong'), element('span', coverage + cache, 'usage-cell muted')); breakdown.append(row);
   }
   if (view === 'usage') text('period', usageRange === 'all' ? 'All loaded history' : usageRange === 'today' ? 'Today · since 12:00 AM' : `Last ${usageRange} days`);
+  renderUsageBreakdown();
+}
+function formatUsd(value: number | null): string {
+  if (value === null) return 'Unknown';
+  return value > 0 && value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+}
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600); const minutes = Math.floor((totalSeconds % 3600) / 60); const seconds = totalSeconds % 60;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+function renderShareBars(holderId: string, rows: { label: string; value: number; sub: string }[], emptyTitle: string, emptyDescription: string): void {
+  const holder = get(holderId); holder.replaceChildren();
+  if (!rows.length) { holder.append(emptyState(emptyTitle, emptyDescription)); return; }
+  const max = Math.max(1, ...rows.map(row => row.value));
+  for (const row of rows) {
+    const item = element('article', '', 'usage-share-row');
+    const header = element('div', '', 'usage-share-head'); header.append(element('strong', row.label), element('span', row.sub));
+    const track = element('div', '', 'assistant-bar-track'); const fill = element('span', '', 'assistant-bar-fill'); fill.style.width = `${row.value / max * 100}%`; track.append(fill);
+    item.append(header, track); holder.append(item);
+  }
+}
+function renderUsageBreakdown(): void {
+  const breakdown = snapshot?.report?.usageBreakdown;
+  if (!breakdown) return;
+  text('usage-cost', formatUsd(breakdown.estimatedCostUsd));
+  text('usage-cost-detail', breakdown.hasUnknownModelCost ? 'Some models have no published rate' : 'Estimated from recorded token fields');
+  text('usage-cache-hit', breakdown.cacheHitRate === null ? 'Unknown' : `${Math.round(breakdown.cacheHitRate * 100)}%`);
+  text('usage-active-time', formatDuration(breakdown.activeElapsedMs));
+  text('usage-loc', breakdown.hasLocData ? `+${breakdown.linesAdded.toLocaleString()} / -${breakdown.linesRemoved.toLocaleString()}` : 'Unknown');
+  text('usage-loc-detail', breakdown.hasLocData ? 'Added / removed in this window' : 'No edit-diff data recorded yet');
+  const total = breakdown.models.reduce((sum, m) => sum + m.turns, 0);
+  renderShareBars('usage-model-breakdown', breakdown.models.map(m => ({
+    label: m.label || 'Unknown model', value: m.turns,
+    sub: `${m.turns.toLocaleString()} turns${total ? ` · ${Math.round(m.turns / total * 100)}%` : ''} · ${formatUsd(m.estimatedCostUsd)}`,
+  })), 'No model activity recorded', 'Model usage will appear as sessions are recorded.');
+  const toolTotal = breakdown.toolSources.reduce((sum, t) => sum + t.calls, 0);
+  renderShareBars('usage-tool-breakdown', breakdown.toolSources.slice(0, 8).map(t => ({
+    label: t.kind === 'mcp' ? `${t.source} (MCP)` : t.source, value: t.calls,
+    sub: `${t.calls.toLocaleString()} calls${toolTotal ? ` · ${Math.round(t.calls / toolTotal * 100)}%` : ''}`,
+  })), 'No tool calls recorded', 'Tool and MCP usage will appear as sessions are recorded.');
 }
 function renderFindings(): void {
   const active = activeFindings(); text('nav-count', String(active.length));

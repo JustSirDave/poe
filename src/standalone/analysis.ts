@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { Session, SessionRequest } from '../core/types';
+import { redactSecrets } from '../core/redact-secrets';
+import { estimateCostUsd, normalizeModel } from '../core/helpers';
+import type { EditLocIndex } from '../core/edit-loc-diff';
 import { responseContexts, type RequestContext } from './request-context';
 import { sessionFindings } from './session-findings';
 import { memoryFindings } from './memory-findings';
-import { redactSecrets } from '../core/redact-secrets';
 import type { CoachConfig } from './config';
 
 export interface Evidence { sessionId: string; requestId: string; harness: string; workspace: string; timestamp: number | null; contextRequestId?: string; toolCallIds?: string[]; reasoningIds?: string[]; details?: string[]; excerpt?: string }
@@ -46,6 +48,19 @@ export interface HarnessActivity {
   turnsWithInput: number;
   turnsWithOutput: number;
 }
+export interface ModelUsageSummary { modelId: string; label: string; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number; estimatedCostUsd: number | null }
+export interface ToolSourceSummary { source: string; kind: 'mcp' | 'tool'; calls: number }
+export interface UsageBreakdown {
+  estimatedCostUsd: number | null;
+  hasUnknownModelCost: boolean;
+  cacheHitRate: number | null;
+  activeElapsedMs: number;
+  linesAdded: number;
+  linesRemoved: number;
+  hasLocData: boolean;
+  models: ModelUsageSummary[];
+  toolSources: ToolSourceSummary[];
+}
 export interface CoachReport {
   generatedAt: string;
   excludedInternalSessions?: number;
@@ -59,6 +74,7 @@ export interface CoachReport {
   harnesses: Record<string, number>;
   recordedTokens: { input: number; output: number; cacheRead: number; cacheWrite: number; turnsWithInput: number; turnsWithOutput: number };
   usageHistory: { firstActivity?: number; lastActivity?: number; days: TokenUsagePoint[]; byHarness: Record<string, HarnessActivity> };
+  usageBreakdown: UsageBreakdown;
   findings: Finding[];
   sources: { harness: string; root: string; exists: boolean }[];
   scan: { incremental?: number; bytesRead?: number; files: number; parsed: number; reused: number; skipped: number; warnings: string[] };
@@ -178,7 +194,84 @@ function createFinding(kind: Exclude<Finding['kind'], 'session'>, key: string, t
   };
 }
 
-export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now = Date.now()): CoachReport {
+/** A tool name's MCP server, or 'tool' for a native (non-MCP) call. Real names use a
+ *  double-underscore delimiter: `mcp__<server>__<tool>`. */
+function toolSource(toolName: string): { source: string; kind: 'mcp' | 'tool' } {
+  if (toolName.startsWith('mcp__')) {
+    const rest = toolName.slice('mcp__'.length);
+    const end = rest.indexOf('__');
+    if (end > 0) return { source: rest.slice(0, end), kind: 'mcp' };
+  }
+  return { source: toolName, kind: 'tool' };
+}
+
+function accumulateModelUsage(models: Map<string, ModelUsageSummary>, request: SessionRequest): { uncachedInput: number; cacheRead: number; cost: number | null } {
+  const modelKey = normalizeModel(request.modelId);
+  const entry = models.get(modelKey) || { modelId: modelKey, label: request.modelId, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, estimatedCostUsd: 0 };
+  entry.turns++;
+  const input = request.promptTokens && request.promptTokens > 0 ? request.promptTokens : 0;
+  const output = request.completionTokens && request.completionTokens > 0 ? request.completionTokens : 0;
+  const cacheRead = request.cacheReadTokens && request.cacheReadTokens > 0 ? request.cacheReadTokens : 0;
+  const cacheWrite = request.cacheWriteTokens && request.cacheWriteTokens > 0 ? request.cacheWriteTokens : 0;
+  entry.input += input; entry.output += output; entry.cacheRead += cacheRead; entry.cacheWrite += cacheWrite;
+  const cost = estimateCostUsd(request.modelId, request.promptTokens, request.completionTokens, request.cacheReadTokens, request.cacheWriteTokens);
+  if (cost === null) entry.estimatedCostUsd = null;
+  else if (entry.estimatedCostUsd !== null) entry.estimatedCostUsd += cost;
+  models.set(modelKey, entry);
+  return { uncachedInput: Math.max(0, input - cacheRead - cacheWrite), cacheRead, cost };
+}
+
+function accumulateToolSources(toolSources: Map<string, ToolSourceSummary>, request: SessionRequest): void {
+  for (const toolName of request.toolsUsed) {
+    const { source, kind } = toolSource(toolName);
+    const summary = toolSources.get(source) || { source, kind, calls: 0 };
+    summary.calls++;
+    toolSources.set(source, summary);
+  }
+}
+
+function accumulateEditLoc(editLocIndex: EditLocIndex | undefined, requestId: string, seen: Set<string>): { added: number; removed: number } | undefined {
+  if (!editLocIndex || seen.has(requestId)) return undefined;
+  seen.add(requestId);
+  const fileEdits = editLocIndex.get(requestId);
+  if (!fileEdits) return undefined;
+  let added = 0; let removed = 0;
+  for (const loc of fileEdits.values()) { added += loc.added; removed += loc.removed; }
+  return { added, removed };
+}
+
+function computeUsageBreakdown(turns: Turn[], editLocIndex: EditLocIndex | undefined): UsageBreakdown {
+  const models = new Map<string, ModelUsageSummary>();
+  const toolSources = new Map<string, ToolSourceSummary>();
+  let estimatedCostUsd: number | null = null;
+  let hasUnknownModelCost = false;
+  let uncachedInputTotal = 0;
+  let cacheReadTotal = 0;
+  let activeElapsedMs = 0;
+  let linesAdded = 0;
+  let linesRemoved = 0;
+  let hasLocData = false;
+  const seenRequests = new Set<string>();
+  for (const turn of turns) {
+    const r = turn.request;
+    const { uncachedInput, cacheRead, cost } = accumulateModelUsage(models, r);
+    uncachedInputTotal += uncachedInput; cacheReadTotal += cacheRead;
+    if (cost === null) hasUnknownModelCost = true;
+    else estimatedCostUsd = (estimatedCostUsd ?? 0) + cost;
+    if (r.totalElapsed !== null && Number.isFinite(r.totalElapsed) && r.totalElapsed > 0) activeElapsedMs += r.totalElapsed;
+    accumulateToolSources(toolSources, r);
+    const loc = accumulateEditLoc(editLocIndex, r.requestId, seenRequests);
+    if (loc) { hasLocData = true; linesAdded += loc.added; linesRemoved += loc.removed; }
+  }
+  const cacheHitRate = cacheReadTotal + uncachedInputTotal > 0 ? cacheReadTotal / (cacheReadTotal + uncachedInputTotal) : null;
+  return {
+    estimatedCostUsd, hasUnknownModelCost, cacheHitRate, activeElapsedMs, linesAdded, linesRemoved, hasLocData,
+    models: [...models.values()].sort((a, b) => b.turns - a.turns),
+    toolSources: [...toolSources.values()].sort((a, b) => b.calls - a.calls),
+  };
+}
+
+export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now = Date.now(), editLocIndex?: EditLocIndex): CoachReport {
   // Older turns may establish task context, but never count toward current findings.
   const activeWindowDays = Math.min(config.lookbackDays, 5);
   const cutoff = now - activeWindowDays * 86400000;
@@ -249,7 +342,8 @@ export function analyzeEfficiency(sessions: Session[], config: CoachConfig, now 
     generatedAt: new Date(now).toISOString(), sessionCount: new Set(turns.map(t => `${t.session.harness}:${t.session.sessionId}`)).size,
     responseReview,
     excludedInternalSessions: sessions.filter(session => session.sessionOrigin === 'guardian').length,
-    requestCount: turns.length, harnesses, recordedTokens: tokens, usageHistory: usageHistory(sessions, now), findings: findings.slice(0, 40),
+    requestCount: turns.length, harnesses, recordedTokens: tokens, usageHistory: usageHistory(sessions, now),
+    usageBreakdown: computeUsageBreakdown(turns, editLocIndex), findings: findings.slice(0, 40),
     sources: [], scan: { files: 0, parsed: 0, reused: 0, skipped: 0, warnings: [] },
   };
 }

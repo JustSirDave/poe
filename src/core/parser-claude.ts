@@ -775,18 +775,22 @@ export function parseClaudeSessionFile(
 }
 
 /** Re-evaluates only the unfinished Claude turn as tool results arrive. */
-export function createClaudeAccumulator(filePath: string, wsId: string, wsName: string): import('./session-accumulator').SessionAccumulator {
+export function createClaudeAccumulator(filePath: string, wsId: string, wsName: string, editLocIndex?: EditLocIndex): import('./session-accumulator').SessionAccumulator {
   let sessionId = path.basename(filePath, '.jsonl');
   let firstLine = true;
   let pending: ClaudeLine[] = [];
   const completed: SessionRequest[] = [];
   let cwd = '';
   let entrypoint: string | undefined;
-  function current(): SessionRequest | undefined {
+  // Only merge into editLocIndex when a request is finalized (a later user message arrived),
+  // not from snapshot()'s in-progress tail preview: mergeRequestEditLoc locks in whatever it's
+  // given for a requestId and ignores later calls, so merging an incomplete in-progress edit
+  // set here would permanently undercount that request's lines once it actually finishes.
+  function current(finalize?: EditLocIndex): SessionRequest | undefined {
     if (!pending.length) return undefined;
     const user = pending[0];
     const data = collectClaudeAssistantData(pending, 1, getTimestamp(user.timestamp));
-    const request = buildClaudeRequest(user, data, getTimestamp(user.timestamp), completed.length, sessionId);
+    const request = buildClaudeRequest(user, data, getTimestamp(user.timestamp), completed.length, sessionId, finalize);
     request.responseText = '';
     return request;
   }
@@ -796,7 +800,7 @@ export function createClaudeAccumulator(filePath: string, wsId: string, wsName: 
       if (!line) return;
       if (firstLine) { sessionId = line.sessionId || sessionId; firstLine = false; }
       if (line.type === 'user' && userHasText(line)) {
-        const previous = current();
+        const previous = current(editLocIndex);
         if (previous) completed.push(previous);
         pending = [];
         if (!cwd && line.cwd) cwd = line.cwd;
