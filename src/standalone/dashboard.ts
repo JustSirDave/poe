@@ -217,16 +217,22 @@ function renderActivityBars(rows: AssistantSummary[]): void {
   }
 }
 function renderTokenBars(rows: AssistantSummary[]): void {
-  const holder = get('overview-token-chart'); holder.replaceChildren(); const maxInput = Math.max(1, ...rows.map(row => row.input)); const maxOutput = Math.max(1, ...rows.map(row => row.output));
+  const holder = get('overview-token-chart'); holder.replaceChildren();
+  // One shared scale across every assistant and both series, so bar height is a direct,
+  // honest comparison -- both input vs. output within a row and assistant vs. assistant.
+  const max = Math.max(1, ...rows.flatMap(row => [row.input, row.output]));
   if (!rows.some(row => row.input || row.output)) { holder.append(emptyState('No recent token fields recorded', 'The session logs in this window do not expose token values.')); return; }
   for (const row of rows) {
     const item = element('article', '', `token-compare-row ${assistantClass(row.name)}`); const header = element('div', '', 'token-row-head'); header.append(assistantIdentity(row.name), element('strong', compact(row.input + row.output)));
-    const series = element('div', '', 'token-series-list');
-    for (const [label, value, max, className] of [['Input', row.input, maxInput, 'input'], ['Output', row.output, maxOutput, 'output']] as const) {
-      const line = element('div', '', 'token-series'); const labelNode = element('div', '', 'token-series-label'); labelNode.append(element('span', label), element('strong', value ? compact(value) : '0'));
-      const track = element('div', '', 'token-bar-track'); const fill = element('span', '', `token-bar-fill ${className}`); fill.style.width = `${value / max * 100}%`; fill.title = `${assistantName(row.name)} ${label.toLowerCase()}: ${value.toLocaleString()} tokens`; track.append(fill); line.append(labelNode, track); series.append(line);
+    const bars = element('div', '', 'token-compare-bars');
+    for (const [label, value, className] of [['Input', row.input, 'input'], ['Output', row.output, 'output']] as const) {
+      const bar = element('div', '', `token-bar ${className}`);
+      bar.style.height = `${value ? Math.max(3, value / max * 100) : 0}%`;
+      bar.title = `${assistantName(row.name)} ${label.toLowerCase()}: ${value.toLocaleString()} tokens`;
+      bar.append(element('span', value ? compact(value) : '0', 'token-bar-value'));
+      bars.append(bar);
     }
-    item.append(header, series); holder.append(item);
+    item.append(header, bars); holder.append(item);
   }
 }
 function renderOverviewAnalysis(): void {

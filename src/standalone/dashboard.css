@@ -249,18 +249,35 @@ h1 { font-size: clamp(29px, 3vw, 40px); line-height: 1.1; letter-spacing: -.04em
   display: grid; place-items: center;
 }
 .chart-assistant strong { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.assistant-bar-track, .token-bar-track { height: 9px; border-radius: 999px; background: var(--surface-muted); overflow: hidden; }
-.assistant-bar-fill, .token-bar-fill { display: block; height: 100%; border-radius: inherit; min-width: 2px; }
-.assistant-bar-fill { background: var(--assistant-color); }
-.token-compare-row { padding-bottom: 15px; border-bottom: 1px solid var(--line); }
+.assistant-bar-track { height: 9px; border-radius: 999px; background: var(--surface-muted); overflow: hidden; }
+.assistant-bar-fill { display: block; height: 100%; border-radius: inherit; min-width: 2px; background: var(--assistant-color); }
+.token-compare-row { padding-bottom: 16px; border-bottom: 1px solid var(--line); }
 .token-compare-row:last-child { padding-bottom: 0; border-bottom: 0; }
-.token-row-head { margin-bottom: 10px; }
+.token-row-head { margin-bottom: 12px; }
 .token-row-head > strong { font-size: 11px; font-variant-numeric: tabular-nums; }
-.token-series-list { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
-.token-series-label { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 5px; font-size: 9px; color: var(--muted); }
-.token-series-label strong { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
-.token-bar-fill.input { background: var(--accent); }
-.token-bar-fill.output { background: var(--warm); }
+/* Side-by-side comparison bars: input vs. output, one shared scale set in JS so the two
+   bars (and every assistant's bars) are directly comparable by height. */
+.token-compare-bars { display: flex; align-items: flex-end; gap: 10px; height: 88px; }
+.token-bar {
+  flex: 1;
+  position: relative;
+  min-height: 3px;
+  border-radius: 6px 6px 3px 3px;
+}
+.token-bar.input { background: var(--accent); }
+.token-bar.output { background: var(--warm); }
+.token-bar-value {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 5px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .overview-chart-card .empty { padding: 28px 18px; }
 .overview-chart-card .empty h2 { font-size: 15px; }
 .overview-chart-card .empty p { font-size: 11px; }
@@ -293,7 +310,7 @@ h1 { font-size: clamp(29px, 3vw, 40px); line-height: 1.1; letter-spacing: -.04em
 .node-three { bottom: 0; left: 38px; transform: rotate(-8deg); }
 
 /* ---- Metric cards (usage page) ---- */
-.metrics { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin: 20px 0 30px; }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin: 0 0 16px; }
 .metrics article { position: relative; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px; box-shadow: var(--shadow-low); }
 .metric-label { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--muted); }
 .metric-label .icon {
@@ -338,13 +355,14 @@ h1 { font-size: clamp(29px, 3vw, 40px); line-height: 1.1; letter-spacing: -.04em
 .measurement-note p { max-width: 85ch; }
 
 /* ---- Usage page ---- */
-.usage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 22px; margin: -4px 0 14px; padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
-.usage-toolbar h2 { font-size: 20px; margin-bottom: 7px; }
-.usage-toolbar p { font-size: 12px; margin: 0; }
-.usage-toolbar label { display: grid; gap: 7px; font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; }
-.usage-toolbar select { min-width: 168px; min-height: 44px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); padding: 9px 36px 9px 16px; text-transform: none; letter-spacing: 0; font-weight: 600; }
+/* Plain header row, not a card: keeps the metric cards + chart visible without scrolling. */
+.usage-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 22px; margin: 0 0 16px; padding: 0; border: 0; background: none; }
+.usage-toolbar h2 { font-size: 20px; margin-bottom: 5px; letter-spacing: -.02em; }
+.usage-toolbar p { font-size: 12.5px; margin: 0; }
+.usage-toolbar label { display: flex; align-items: center; gap: 8px; font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; }
+.usage-toolbar select { min-width: 150px; min-height: 40px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); padding: 8px 32px 8px 14px; text-transform: none; letter-spacing: 0; font-weight: 600; box-shadow: var(--shadow-low); }
 .usage-toolbar select:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
-.usage-panel { margin-top: 18px; padding: 24px; }
+.usage-panel { margin-top: 14px; padding: 22px; }
 .usage-chart-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .usage-chart-header h2 { font-size: 17px; margin-bottom: 6px; }
 .usage-chart-header p { font-size: 11px; margin: 0; }
@@ -526,7 +544,7 @@ dialog::backdrop { background: rgb(32 31 54 / 45%); backdrop-filter: blur(4px); 
 @media (max-width: 800px) {
   .overview-dashboard-head { align-items: flex-start; }
   .overview-chart-grid { grid-template-columns: 1fr; }
-  .token-series-list { gap: 9px; }
+  .token-compare-bars { gap: 7px; }
   .overview-analysis { grid-template-columns: 1fr; }
   .overview-analysis-stats { grid-row: auto; grid-column: auto; }
   .source-glance-grid { grid-template-columns: 1fr; }
@@ -638,7 +656,7 @@ dialog::backdrop { background: rgb(32 31 54 / 45%); backdrop-filter: blur(4px); 
   .assistant-card-top { align-items: flex-start; flex-direction: column; }
   .chart-card-head { display: block; }
   .chart-unit, .token-legend { display: inline-flex; margin-top: 10px; }
-  .token-series-list { grid-template-columns: 1fr; }
+  .token-compare-bars { height: 64px; }
 }
 
 @media (max-width: 430px) {
@@ -652,37 +670,8 @@ dialog::backdrop { background: rgb(32 31 54 / 45%); backdrop-filter: blur(4px); 
   .dialog-actions { margin: 16px -20px -20px; }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14121f;
-    --surface: #1b1930;
-    --surface-raised: #221f3c;
-    --surface-muted: #221f3c;
-    --ink: #ece9fb;
-    --muted: #a7a2c4;
-    --subtle: #8b86ab;
-    --line: #322d54;
-    --line-strong: #433c6c;
-    --accent: #8f7ef5;
-    --accent-strong: #a496fb;
-    --accent-soft: #2c2650;
-    --warm-soft: #3a2a2a;
-    --yellow-soft: #3a331f;
-    --green-soft: #17332a;
-    --dark: #0e0c18;
-    --dark-raised: #1c1930;
-    --focus: #7fa8ff;
-    --shadow-low: 0 1px 2px rgb(0 0 0 / 30%);
-    --shadow-mid: 0 16px 40px rgb(0 0 0 / 36%);
-  }
-  body { background: radial-gradient(circle at 82% -8%, rgb(143 126 245 / 12%), transparent 32rem), var(--bg); }
-  .sidebar { background: var(--surface); }
-  .topbar { background: rgb(27 25 48 / 88%); }
-  .overview-dashboard::after { background: radial-gradient(circle, rgb(143 126 245 / 12%), transparent 68%); }
-  .button-light { color: var(--accent-strong); }
-  .filter-bar { background: rgb(27 25 48 / 92%); }
-  .error { background: #3a2224; border-color: #6b3a3c; color: #f0a9a6; }
-}
+/* Deliberately light-only: no prefers-color-scheme auto-switch. The theme is a fixed
+   choice (matching the requested reference), not adaptive to the OS/browser setting. */
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
