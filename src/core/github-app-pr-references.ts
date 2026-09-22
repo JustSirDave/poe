@@ -43,13 +43,24 @@ function isPullRequestReference(value: unknown): value is {
     && /^[1-9]\d*$/.test(value.refValue.trim());
 }
 
+// Reported-fact merge phrasing ("has been merged", "was merged successfully", ...).
+// Deliberately excludes the "merged pull request" structured marker, checked separately
+// against the full response since it's a low-false-positive tool-output-style line.
+const MERGE_FACT_PATTERN = /\b(?:has been|was|is)\s+merged\b|\bsuccessfully\s+merged\b|\bmerged\s+successfully\b|\b(?:state|status)\s*[:=]\s*["']?merged\b/i;
+// Words that turn "is merged" into a hypothetical/future statement rather than reported
+// fact ("Once this PR is merged, CI will re-run" / "I'll let you know once it is merged").
+const HYPOTHETICAL_MERGE_CONTEXT = /\b(?:once|when|after|if|before|will|would|should|let (?:you|me) know|going to|about to|need(?:s)? to)\b/i;
+
 function hasMergeEvidence(response: unknown): boolean {
   if (typeof response !== 'string') return false;
-  return /\b(?:has been|was|is)\s+merged\b/i.test(response)
-    || /\bsuccessfully\s+merged\b/i.test(response)
-    || /\bmerged\s+successfully\b/i.test(response)
-    || /\b(?:state|status)\s*[:=]\s*["']?merged\b/i.test(response)
-    || /^\s*merged pull request\b/im.test(response);
+  if (/^\s*merged pull request\b/im.test(response)) return true;
+  if (!MERGE_FACT_PATTERN.test(response)) return false;
+  // Scope the hypothetical-context check to the sentence containing the match, so an
+  // unrelated hypothetical clause elsewhere in a long response can't suppress genuine
+  // merge evidence, and vice versa.
+  return response
+    .split(/(?<=[.!?])\s+|\n+/)
+    .some(sentence => MERGE_FACT_PATTERN.test(sentence) && !HYPOTHETICAL_MERGE_CONTEXT.test(sentence));
 }
 
 export function collectGitHubAppPullRequestSessionIds(

@@ -191,7 +191,10 @@ describe('GitHub App issue credit aggregation', () => {
     });
 
     expect(metrics.issues.map(issue => issue.issueNumber).sort()).toEqual([3013, 3034]);
-    expect(metrics.issues.every(issue => issue.estimatedCredits === 1)).toBe(true);
+    // The session's cost is split evenly across the issues it's linked to, so summing the
+    // per-issue estimates matches the deduped total instead of crediting the full session
+    // cost to each issue independently.
+    expect(metrics.issues.every(issue => issue.estimatedCredits === 0.5)).toBe(true);
     expect(metrics).toMatchObject({
       linkedSessionCount: 1,
       pricedSessionCount: 1,

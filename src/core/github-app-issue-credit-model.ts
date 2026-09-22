@@ -201,6 +201,16 @@ export function aggregateGitHubAppIssueCredits(rows: GitHubAppIssueCreditRows): 
   const allLinkedSessions = new Set<string>();
   const allPricedSessions = new Set<string>();
 
+  // A session linked to multiple issues has its cost split evenly across them, so the
+  // per-issue estimates sum back to the deduped total below instead of crediting the
+  // session's full cost to every issue it touched.
+  const issueCountBySession = new Map<string, number>();
+  for (const issue of issues.values()) {
+    for (const sessionId of issue.sessionIds) {
+      issueCountBySession.set(sessionId, (issueCountBySession.get(sessionId) ?? 0) + 1);
+    }
+  }
+
   const estimates = [...issues.values()].map<GitHubAppIssueCreditEstimate>(issue => {
     let totalNanoAiu = 0;
     let pricedSessionCount = 0;
@@ -210,7 +220,7 @@ export function aggregateGitHubAppIssueCredits(rows: GitHubAppIssueCreditRows): 
       if (sessionNanoAiu === undefined) continue;
       pricedSessionCount++;
       allPricedSessions.add(sessionId);
-      totalNanoAiu += sessionNanoAiu;
+      totalNanoAiu += sessionNanoAiu / (issueCountBySession.get(sessionId) ?? 1);
     }
     return {
       repository: issue.repository,
