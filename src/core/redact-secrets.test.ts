@@ -77,6 +77,17 @@ describe('redactSecrets', () => {
     expect(redactSecrets('api_key=super-secret-value-123')).toBe('api_key=[REDACTED]');
   });
 
+  it('masks prefixed env-var-style secret names, not just the bare keyword', () => {
+    // \b treats '_' as a word character, so a leading \b before the keyword never matched
+    // PREFIX_KEYWORD names -- the most common real-world secret env-var shape.
+    expect(redactSecrets('DATABASE_PASSWORD=SuperSecretPass123')).toBe('DATABASE_PASSWORD=[REDACTED]');
+    expect(redactSecrets('STRIPE_WEBHOOK_SECRET=whsec_abcdefghijklmnop')).toBe('STRIPE_WEBHOOK_SECRET=[REDACTED]');
+    expect(redactSecrets('AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY')).toBe('AWS_SECRET_ACCESS_KEY=[REDACTED]');
+    expect(redactSecrets('AZURE_CLIENT_SECRET=abcXYZ123abcXYZ123abc')).toBe('AZURE_CLIENT_SECRET=[REDACTED]');
+    expect(redactSecrets('JWT_SECRET=myjwtsigningsecretvalue')).toBe('JWT_SECRET=[REDACTED]');
+    expect(redactSecrets('"DB_PASSWORD": "hunter2hunter2"')).toBe('"DB_PASSWORD": "[REDACTED]"');
+  });
+
   it('masks quoted JSON-style assignment values', () => {
     expect(redactSecrets('"password": "hunter2hunter2"')).toBe('"password": "[REDACTED]"');
   });

@@ -208,6 +208,37 @@ describe('parseClaudeSessions', () => {
     });
   });
 
+  it('records a tool edit whose confirming tool_result arrives on the same line as an interrupt', () => {
+    // Claude can pack the interrupt text and the pending tool's tool_result into the same
+    // user record's content array. The result must still be recorded before the scan for
+    // this turn's tool activity stops at that line.
+    withProjectsDir('s.jsonl', [
+      makeUser('edit a file', '2025-06-15T10:00:00Z', { uuid: 'request_interrupted_edit' }),
+      makeToolAssistant('Edit', {
+        file_path: '/Users/me/proj/app.ts',
+        old_string: 'old',
+        new_string: 'new',
+      }, '2025-06-15T10:00:01Z', 'tool-interrupted'),
+      {
+        type: 'user',
+        timestamp: '2025-06-15T10:00:02Z',
+        sessionId: 'sess-1',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'tool-interrupted', content: 'ok' },
+            { type: 'text', text: '[Request interrupted by user for tool use]' },
+          ],
+        },
+      },
+    ], (projectsDir) => {
+      const editLocIndex: EditLocIndex = new Map();
+      const request = parseClaudeSessions(projectsDir, editLocIndex)[0].sessions[0].requests[0];
+      expect(request.editedFiles).toEqual(['/Users/me/proj/app.ts']);
+      expect(editLocIndex.get('request_interrupted_edit')?.get('/Users/me/proj/app.ts')).toEqual({ added: 1, removed: 1 });
+    });
+  });
+
   it('skips [Request interrupted by user…] markers', () => {
     withProjectsDir('s.jsonl', [
       makeUser('do something'),

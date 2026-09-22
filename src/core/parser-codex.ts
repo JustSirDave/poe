@@ -212,7 +212,11 @@ function commitCodexEdit(state: CodexParseState, pending: PendingCodexEdit): voi
 }
 
 function flushCodexTurn(state: CodexParseState, defaultModel: string): void {
-  if (!state.currentUserMessage && state.currentAssistantTexts.length === 0) return;
+  // A turn with no user message and no assistant text can still have real recorded work
+  // (tool calls, edits, token usage) -- e.g. the session's first user_message was filtered
+  // out as harness-injected context. Use the same "did anything happen" definition as
+  // isTurnEmpty() rather than a narrower check that silently drops that work.
+  if (!state.currentUserMessage && state.currentAssistantTexts.length === 0 && isTurnEmpty(state)) return;
   state.pendingToolEdits.clear();
 
   const responseText = state.currentAssistantTexts.join('\n');
@@ -612,7 +616,6 @@ function findAllJsonlFiles(dir: string): string[] {
 }
 
 export function parseCodexSessionFile(filePath: string, editLocIndex?: EditLocIndex, trustedRoots?: string[]): Session | null {
-  assertTrustedPath(filePath, trustedRoots);
   const meta: CodexSessionMeta = {
     sessionId: path.basename(filePath, '.jsonl'),
     cwd: '',
@@ -624,6 +627,7 @@ export function parseCodexSessionFile(filePath: string, editLocIndex?: EditLocIn
   let parsedLineCount = 0;
 
   try {
+    assertTrustedPath(filePath, trustedRoots);
     readCodexJsonlStreaming(filePath, (line) => {
       parsedLineCount++;
       handleCodexLine(line, state, meta);

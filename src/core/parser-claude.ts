@@ -298,13 +298,15 @@ function collectClaudeToolResults(
   const failed = new Set<string>();
   for (let i = startIndex; i < lines.length; i++) {
     const line = lines[i];
-    if (line.type === 'user' && userHasText(line)) break;
     if (line.type !== 'user') continue;
+    // An interrupt can carry the interrupt text and the pending tool's result on the same
+    // line, so record the result before checking whether this line ends the scan.
     for (const block of toContentArray(line.message?.content)) {
       if (block.type !== 'tool_result' || !block.tool_use_id) continue;
       completed.add(block.tool_use_id);
       if (block.is_error === true) failed.add(block.tool_use_id);
     }
+    if (userHasText(line)) break;
   }
   return { completed, failed };
 }
@@ -708,64 +710,68 @@ export function parseClaudeSessionFile(
   editLocIndex?: EditLocIndex,
   trustedRoots?: string[],
 ): Session | null {
-  assertTrustedPath(filePath, trustedRoots);
-  let raw: string;
+  // The whole body is wrapped, not just the file read: parser-shared.ts documents that "an
+  // unreadable file returns null rather than aborting the whole parse", and callers (e.g.
+  // parseClaudeProjectSessions) collect results into an array only returned once every file
+  // in a directory has been processed -- an uncaught exception from a malformed line deep in
+  // this function would otherwise discard every session already parsed in that pass.
   try {
+    assertTrustedPath(filePath, trustedRoots);
     const content = readFileSafe(filePath);
     if (content === null) return null;
-    raw = content;
+    const raw = content;
+
+    const lines = parseClaudeLines(raw);
+    if (lines.length === 0) return null;
+
+    const sessionId = lines[0].sessionId || path.basename(filePath, '.jsonl');
+    const requests: SessionRequest[] = [];
+    let cwd = '';
+    let firstTs: number | null = null;
+    let lastTs: number | null = null;
+    let entrypoint: string | undefined;
+    let i = 0;
+
+    while (i < lines.length) {
+      const line = lines[i];
+      if (line.type !== 'user' || !userHasText(line)) {
+        i++;
+        continue;
+      }
+
+      if (!cwd && line.cwd) cwd = line.cwd;
+      // Capture the first non-empty entrypoint we see. In practice Claude Code
+      // writes it on every user line, but we only need one.
+      if (!entrypoint && line.entrypoint) entrypoint = line.entrypoint;
+      const userTs = getTimestamp(line.timestamp);
+      ({ firstTs, lastTs } = updateClaudeTimestampRange(userTs, firstTs, lastTs));
+
+      const assistantData = collectClaudeAssistantData(lines, i + 1, lastTs);
+      lastTs = assistantData.lastTs;
+      requests.push(buildClaudeRequest(line, assistantData, userTs, requests.length, sessionId, editLocIndex));
+      i = assistantData.nextIndex;
+    }
+
+    if (requests.length === 0) return null;
+
+    const launcherKind = classifyLauncher(entrypoint);
+    return createSession({
+      sessionId,
+      workspaceId: wsId,
+      workspaceName: wsName,
+      location: 'terminal',
+      harness: harnessForLauncher(launcherKind),
+      creationDate: firstTs,
+      lastMessageDate: lastTs,
+      requests,
+      hasDevcontainer: detectDevcontainerFromRequests(requests, cwd),
+      workspaceRootPath: cwd || undefined,
+      launcherKind,
+      entrypoint,
+    });
   } catch {
     return null;
   }
-
-  const lines = parseClaudeLines(raw);
-  if (lines.length === 0) return null;
-
-  const sessionId = lines[0].sessionId || path.basename(filePath, '.jsonl');
-  const requests: SessionRequest[] = [];
-  let cwd = '';
-  let firstTs: number | null = null;
-  let lastTs: number | null = null;
-  let entrypoint: string | undefined;
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line.type !== 'user' || !userHasText(line)) {
-      i++;
-      continue;
-    }
-
-    if (!cwd && line.cwd) cwd = line.cwd;
-    // Capture the first non-empty entrypoint we see. In practice Claude Code
-    // writes it on every user line, but we only need one.
-    if (!entrypoint && line.entrypoint) entrypoint = line.entrypoint;
-    const userTs = getTimestamp(line.timestamp);
-    ({ firstTs, lastTs } = updateClaudeTimestampRange(userTs, firstTs, lastTs));
-
-    const assistantData = collectClaudeAssistantData(lines, i + 1, lastTs);
-    lastTs = assistantData.lastTs;
-    requests.push(buildClaudeRequest(line, assistantData, userTs, requests.length, sessionId, editLocIndex));
-    i = assistantData.nextIndex;
-  }
-
-  if (requests.length === 0) return null;
-
-  const launcherKind = classifyLauncher(entrypoint);
-  return createSession({
-    sessionId,
-    workspaceId: wsId,
-    workspaceName: wsName,
-    location: 'terminal',
-    harness: harnessForLauncher(launcherKind),
-    creationDate: firstTs,
-    lastMessageDate: lastTs,
-    requests,
-    hasDevcontainer: detectDevcontainerFromRequests(requests, cwd),
-    workspaceRootPath: cwd || undefined,
-    launcherKind,
-    entrypoint,
-  });
 }
 
 /** Re-evaluates only the unfinished Claude turn as tool results arrive. */

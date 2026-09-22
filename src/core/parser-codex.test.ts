@@ -294,6 +294,40 @@ describe('parseCodexSessions skillsUsed extraction', () => {
       expect(texts).toContain('what is this repo about?');
     });
   });
+
+  it('keeps tool activity recorded even when no real user message is ever captured for the turn', () => {
+    withCodexFile([
+      { type: 'session_meta', payload: { id: 'sess-inject-tools', cwd: '/Users/me/proj' } },
+      { type: 'turn_context', payload: { model: 'gpt-5.3-codex' } },
+      // Session-start injected context is filtered out, so currentUserMessage never gets set.
+      { type: 'response_item', timestamp: '2025-06-15T10:00:00Z',
+        payload: { type: 'message', role: 'user', content: [
+          { type: 'input_text', text: '# AGENTS.md instructions for /Users/me/proj\n\nfollow repo conventions' },
+        ] } },
+      // A tool call and its result happen before any real user message is ever captured.
+      { type: 'response_item', timestamp: '2025-06-15T10:00:01Z',
+        payload: {
+          type: 'custom_tool_call',
+          call_id: 'call-early',
+          name: 'apply_patch',
+          input: [
+            '*** Begin Patch',
+            '*** Add File: src/early.ts',
+            '+export const early = 1;',
+            '*** End Patch',
+          ].join('\n'),
+        } },
+      { type: 'response_item', timestamp: '2025-06-15T10:00:02Z',
+        payload: { type: 'custom_tool_call_output', call_id: 'call-early', output: { body: 'patch applied', success: true } } },
+    ], (sessionsDir) => {
+      const editLocIndex: EditLocIndex = new Map();
+      const sessions = parseCodexSessions(sessionsDir, editLocIndex);
+      expect(sessions).toHaveLength(1);
+      const request = sessions[0].requests[0];
+      expect(request.toolsUsed).toContain('apply_patch');
+      expect(request.editedFiles).toEqual(['src/early.ts']);
+    });
+  });
 });
 
 describe('findCodexDirs', () => {
