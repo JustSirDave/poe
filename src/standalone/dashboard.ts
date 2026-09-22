@@ -238,8 +238,10 @@ function renderOverviewAnalysis(): void {
   text('overview-analysis-copy', leader ? `${assistantName(leader.name)} handled the most turns in the latest ${days}-day activity window.` : `Poe will compare your assistants across the latest ${days} days as sessions appear.`);
   const stats = get('overview-analysis-stats'); stats.replaceChildren();
   const inputShare = total ? Math.round(input / total * 1000) / 10 : 0;
-  for (const [label, value, detail] of [['Processed tokens', total ? compact(total) : 'Unknown', total ? `${inputShare}% input` : 'No token fields'], ['Input tokens', input ? compact(input) : 'Unknown', `${points.reduce((sum, point) => sum + point.turnsWithInput, 0)} turns measured`], ['Output tokens', output ? compact(output) : 'Unknown', `${points.reduce((sum, point) => sum + point.turnsWithOutput, 0)} turns measured`], ['Sessions', sessions.toLocaleString(), `${turns.toLocaleString()} turns`]]) {
-    const card = element('article'); const top = element('div', '', 'overview-kpi-label'); top.append(element('span', label), element('i')); card.append(top, element('strong', value), element('small', detail)); stats.append(card);
+  for (const [label, value, detail, iconName] of [['Processed tokens', total ? compact(total) : 'Unknown', total ? `${inputShare}% input` : 'No token fields', 'usage'], ['Input tokens', input ? compact(input) : 'Unknown', `${points.reduce((sum, point) => sum + point.turnsWithInput, 0)} turns measured`, 'input'], ['Output tokens', output ? compact(output) : 'Unknown', `${points.reduce((sum, point) => sum + point.turnsWithOutput, 0)} turns measured`, 'output'], ['Sessions', sessions.toLocaleString(), `${turns.toLocaleString()} turns`, 'sessions']] as const) {
+    const card = element('article'); const chip = element('span', '', 'overview-kpi-chip'); chip.append(icon(iconName));
+    const top = element('div', '', 'overview-kpi-label'); top.append(element('span', label), element('i'));
+    card.append(chip, top, element('strong', value), element('small', detail)); stats.append(card);
   }
   renderActivityBars(rows); renderTokenBars(rows);
 }
