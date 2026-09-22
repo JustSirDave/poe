@@ -127,7 +127,10 @@ export function createCanvasHost(options: CanvasHostOptions): CanvasHost {
 
   function dispatchRpc(method: string, params: Record<string, unknown>): unknown {
     if (method === 'getCapabilities') return { host: 'canvas', llm: false };
-    if (method in HOST_STUBS) return HOST_STUBS[method]();
+    // `in` also matches inherited Object.prototype members (constructor, toString, ...),
+    // so an RPC call for one of those names would otherwise return a bogus successful
+    // result instead of falling through to "Unknown method".
+    if (Object.prototype.hasOwnProperty.call(HOST_STUBS, method)) return HOST_STUBS[method]();
     if (AGENT_ONLY.has(method)) return { error: 'This feature requires the local agent in VS Code.' };
 
     if (!ready || !analyzer || !parseResult) return { error: 'Data is still loading.' };
@@ -173,6 +176,12 @@ export function createCanvasHost(options: CanvasHostOptions): CanvasHost {
   }
 
   function handleEvents(req: IncomingMessage, res: ServerResponse): void {
+    // Same trust boundary as /rpc: without this check any page/process that can reach the
+    // loopback port could open an unauthenticated, uncapped long-lived SSE connection.
+    if (!isAllowedRpcOrigin(req)) {
+      sendStatus(res, 403, 'Forbidden');
+      return;
+    }
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -305,15 +314,16 @@ postMessage:function(msg){
 if(!msg||msg.type!=='request')return;
 if(msg.method==='openExternal'){
 var url=msg.params&&msg.params.url;
+var opened=false;
 try{
 if(typeof url==='string'&&url.toLowerCase().startsWith('https://')){
 var safe=true;
 for(var i=0;i<url.length;i++){var code=url.charCodeAt(i);if(code<=31||code===127){safe=false;break;}}
 var parsed=safe&&new URL(url);
-if(parsed&&parsed.protocol==='https:'&&parsed.hostname&&!parsed.username&&!parsed.password)window.open(parsed.href,'_blank','noopener');
+if(parsed&&parsed.protocol==='https:'&&parsed.hostname&&!parsed.username&&!parsed.password){window.open(parsed.href,'_blank','noopener');opened=true;}
 }
 }catch(e){}
-dispatch({type:'response',id:msg.id,data:{ok:true}});
+dispatch({type:'response',id:msg.id,data:{ok:opened}});
 return;
 }
 fetch('/rpc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:msg.id,method:msg.method,params:msg.params})})
