@@ -22,6 +22,17 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
 }
 
+// Requires a matching Host and, when present, a matching Origin and a non-cross-site
+// Sec-Fetch-Site. State-changing requests must additionally carry at least one of those two
+// origin signals — a same-site request that omits both cannot be told apart from a spoofed one.
+export function isSameOriginRequest(req: IncomingMessage, origin: string): boolean {
+  if (`http://${req.headers.host || ''}` !== origin) return false;
+  if (req.headers.origin && req.headers.origin !== origin) return false;
+  if (req.headers['sec-fetch-site'] === 'cross-site') return false;
+  if (req.method === 'POST' && !req.headers.origin && !req.headers['sec-fetch-site']) return false;
+  return true;
+}
+
 export async function startDashboard(service: CoachService): Promise<{ url: string; close: () => Promise<void> }> {
   const reviews = new ReviewStore(service.config.stateDir);
   const mcp = createMcpHandler(service);
@@ -30,8 +41,7 @@ export async function startDashboard(service: CoachService): Promise<{ url: stri
   const server = createServer((req, res) => { void handle(req, res).catch(() => respond(res, 400, { error: 'Request failed' })); });
   server.requestTimeout = 10000;
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (`http://${req.headers.host || ''}` !== origin || (req.headers.origin && req.headers.origin !== origin)
-      || req.headers['sec-fetch-site'] === 'cross-site') { respond(res, 403, { error: 'Local same-origin requests only' }); return; }
+    if (!isSameOriginRequest(req, origin)) { respond(res, 403, { error: 'Local same-origin requests only' }); return; }
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");

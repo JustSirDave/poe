@@ -66,3 +66,17 @@ it('migrates review history from the legacy ~/.ai-engineer-coach state directory
     expect(migrated).toEqual([event]);
   } finally { homedirRef.value = ''; await fs.rm(home, { recursive: true, force: true }); }
 });
+
+it('surfaces a corrupted legacy history instead of silently discarding it', async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'poe-home-'));
+  homedirRef.value = home;
+  try {
+    const legacyDir = path.join(home, '.ai-engineer-coach', 'standalone');
+    await fs.mkdir(legacyDir, { recursive: true });
+    await fs.writeFile(path.join(legacyDir, 'reviews.json'), 'not valid json');
+
+    const config = resolveConfig({ stateDir: path.join(home, '.poe', 'standalone') }, home);
+    const store = new ReviewStore(config.stateDir);
+    await expect(store.load()).rejects.toThrow(/legacy review history/i);
+  } finally { homedirRef.value = ''; await fs.rm(home, { recursive: true, force: true }); }
+});

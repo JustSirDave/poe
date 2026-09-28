@@ -118,8 +118,6 @@ export const CONTEXT_MIN_TOKEN_REQUESTS = 5;              // min requests with t
 export const CONTEXT_GROWING_SESSION_MIN_REQS = 8;        // min requests to detect runaway growth
 export const CONTEXT_GROWING_SESSION_GROWTH_RATE = 0.8;   // 80%+ sequential increases = runaway
 
-/* ---- Token estimation (for sessions without native token data) ---- */
-
 /* ---- Token data quality cutoff ---- */
 export const TOKEN_DATA_AVAILABLE_FROM = '2026-04-01';
 
