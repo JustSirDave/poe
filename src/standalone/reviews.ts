@@ -27,7 +27,10 @@ export class ReviewStore {
       this.events = historySchema.parse(JSON.parse(await fs.readFile(legacyDefaultFile(), 'utf8')));
       await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });
       await fs.writeFile(file, JSON.stringify(this.events), { mode: 0o600 });
-    } catch { /* No legacy history to migrate. */ }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; // No legacy history to migrate.
+      throw new Error('Legacy review history could not be migrated; restore or move the old reviews.json before starting.', { cause: error });
+    }
   }
   history(): ReviewEvent[] { return [...this.events]; }
   async record(input: unknown): Promise<void> {

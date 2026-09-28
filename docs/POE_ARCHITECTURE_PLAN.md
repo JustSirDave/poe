@@ -1,5 +1,10 @@
 # Poe architecture plan
 
+> **Status (2026-09):** the Python analysis worker, JSONL evidence stream, and SQLite store
+> described below have not been started. All parsing, rule/metric evaluation, and scoring
+> currently run entirely in TypeScript (`src/core/`). This document describes the target
+> architecture, not the current state.
+
 ## Goal
 
 Poe is a local system that studies Codex, Claude Code, VS Code, and Copilot sessions to explain:

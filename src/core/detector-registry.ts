@@ -262,10 +262,22 @@ function buildRegistry(): DetectorDefinition[] {
 
 let _registry: DetectorDefinition[] | null = null;
 
+function currentRegistry(): DetectorDefinition[] {
+  if (!_registry) _registry = buildRegistry();
+  return _registry;
+}
+
+// The proxy target is a permanently-empty array, so any trap left to the JS default
+// (i.e. not implemented here) falls through to that empty target rather than to the lazily
+// built `_registry`. Iteration methods that branch on [[HasProperty]] before [[Get]] — map,
+// filter, some, every, forEach, reduce, `for...in` — silently treat every index as a hole
+// unless `has` is also forwarded, so both traps must delegate to `currentRegistry()`.
 export const DETECTOR_REGISTRY: DetectorDefinition[] = new Proxy([] as DetectorDefinition[], {
   get(_target, prop) {
-    if (!_registry) _registry = buildRegistry();
-    return Reflect.get(_registry, prop) as unknown;
+    return Reflect.get(currentRegistry(), prop) as unknown;
+  },
+  has(_target, prop) {
+    return Reflect.has(currentRegistry(), prop);
   },
 });
 
